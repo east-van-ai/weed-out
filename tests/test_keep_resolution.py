@@ -6,15 +6,36 @@ fixture from conftest.py. See DESIGN.md's "The Keep/Delete Pipeline" for
 the intent behind each of these passes.
 """
 
-from weed_out.cli import (
+from weed_out.keep import (
     build_exact_keep,
     build_protected_dirs,
+    deepen_pattern,
     is_directly_kept,
+    is_glob,
+    is_real_dir,
     is_under_kept_dir,
+    narrowing_pattern_hints,
     path_pattern_match,
     read_ignore_file,
+    resolve_walk_sets,
     should_keep,
 )
+
+# ---------- is_glob ----------
+
+
+def test_is_glob_recognizes_each_wildcard():
+    assert is_glob("*.md")
+    assert is_glob("file?.txt")
+    assert is_glob("[abc].txt")
+    assert is_glob("src/**/*.py")
+
+
+def test_is_glob_false_for_exact_paths():
+    assert not is_glob("README.md")
+    assert not is_glob("src/main.py")
+    assert not is_glob(".config")
+
 
 # ---------- read_ignore_file ----------
 
@@ -59,6 +80,53 @@ def test_glob_entries_are_not_added_to_exact_keep(sample_tree):
     exact_keep, kept_roots = build_exact_keep(sample_tree, ["*.md"])
     assert exact_keep == set()
     assert kept_roots == set()
+
+
+def test_exact_keep_collapses_dot_and_dot_dot_lexically(sample_tree):
+    """Lexical normalization is not a loss of the old resolve(): `.` and
+    `..` still collapse, they just collapse as text."""
+    exact_keep, kept_roots = build_exact_keep(sample_tree, ["src/../keep.md", "./src"])
+    assert (sample_tree / "keep.md") in exact_keep
+    assert (sample_tree / "src") in kept_roots
+
+
+# ---------- build_exact_keep: identity resolution never dereferences ----------
+
+
+def test_exact_keep_names_the_symlink_not_its_target(linked_tree):
+    """A --keep entry naming a symlink must file the link's own path.
+    resolve() filed the target instead, a path the walk never produces,
+    so the named link was removed and its target protected in its place."""
+    _exact_keep, kept_roots = build_exact_keep(linked_tree, ["to_dir", "to_file"])
+    assert kept_roots == {linked_tree / "to_dir", linked_tree / "to_file"}
+
+
+def test_exact_keep_does_not_drag_in_a_targets_ancestor_chain(linked_tree):
+    """Nothing outside PATH may enter exact_keep. The old resolve() pulled
+    the target's own parent chain in behind it."""
+    exact_keep, _kept_roots = build_exact_keep(linked_tree, ["to_dir", "to_file"])
+    outside = linked_tree.parent / "outside"
+    assert not any(p == outside or outside in p.parents for p in exact_keep)
+
+
+def test_exact_keep_of_a_link_inside_path_leaves_its_target_alone(linked_tree):
+    """The target being *inside* PATH is the case where dereferencing did
+    visible damage: archive/2024 became a kept_root and protected a whole
+    subtree nobody named."""
+    exact_keep, kept_roots = build_exact_keep(linked_tree, ["inside"])
+    assert kept_roots == {linked_tree / "inside"}
+    assert (linked_tree / "archive" / "2024") not in exact_keep
+
+
+def test_exact_keep_through_a_symlink_keeps_only_the_link(linked_tree):
+    """You cannot reach through a link. The entry itself matches nothing
+    the walk produces, but the ancestor rule still protects the link, so
+    it behaves exactly like naming the link on its own."""
+    exact_keep, kept_roots = build_exact_keep(linked_tree, ["to_dir/far.md"])
+    assert (linked_tree / "to_dir") in exact_keep
+    assert kept_roots == {linked_tree / "to_dir" / "far.md"}
+    outside = linked_tree.parent / "outside"
+    assert not any(p == outside or outside in p.parents for p in exact_keep)
 
 
 # ---------- is_directly_kept ----------
@@ -165,17 +233,21 @@ def test_glob_only_kept_file_protects_its_parent_directory(sample_tree):
     """DESIGN.md's protected-directory bug: notes/design.md is kept only
     via *.md, but notes/ isn't named anywhere in --keep. It must still
     survive."""
-    exact_keep, _kept_roots = build_exact_keep(sample_tree, ["*.md"])
+    _exact_keep, kept_roots = build_exact_keep(sample_tree, ["*.md"])
     patterns = ["*.md"]
-    protected = build_protected_dirs(sample_tree, exact_keep, patterns, False, False)
+    protected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, patterns, False, False
+    )
     assert (sample_tree / "notes").resolve() in protected
     assert sample_tree.resolve() in protected
 
 
 def test_directory_with_no_kept_descendant_is_not_protected(sample_tree):
-    exact_keep, _kept_roots = build_exact_keep(sample_tree, ["*.md"])
+    _exact_keep, kept_roots = build_exact_keep(sample_tree, ["*.md"])
     patterns = ["*.md"]
-    protected = build_protected_dirs(sample_tree, exact_keep, patterns, False, False)
+    protected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, patterns, False, False
+    )
     assert (sample_tree / "build").resolve() not in protected
 
 
@@ -204,12 +276,148 @@ def test_file_outside_kept_directory_is_not_under_kept_dir(sample_tree):
     assert not is_under_kept_dir(drop_txt, kept_roots)
 
 
+# ---------- build_protected_dirs: directly_kept_dirs (the dot-dir/glob-dir
+# shell-only bug) ----------
+
+
+def test_dotdir_is_collected_as_directly_kept_dir(tmp_path):
+    """DESIGN.md's shell-only bug: a directory kept only via --dot-dirs
+    must land in directly_kept_dirs so its contents can be protected too,
+    not just the directory entry itself."""
+    dotdir = tmp_path / ".config"
+    dotdir.mkdir()
+    (dotdir / "settings.json").write_text("{}\n")
+    _protected, directly_kept_dirs = build_protected_dirs(
+        tmp_path, set(), [], False, True
+    )
+    assert dotdir.resolve() in directly_kept_dirs
+
+
+def test_glob_matched_directory_is_collected_as_directly_kept_dir(tmp_path):
+    """Same bug, but for a directory kept because its own name matches a
+    --keep glob pattern rather than via --dot-dirs."""
+    config_dir = tmp_path / "build.out"
+    config_dir.mkdir()
+    (config_dir / "artifact.bin").write_text("binary\n")
+    _protected, directly_kept_dirs = build_protected_dirs(
+        tmp_path, set(), ["*.out"], False, False
+    )
+    assert config_dir.resolve() in directly_kept_dirs
+
+
+def test_regular_kept_file_is_not_collected_as_directly_kept_dir(sample_tree):
+    """directly_kept_dirs only ever holds directories -- a kept file must
+    never show up in it."""
+    _exact_keep, kept_roots = build_exact_keep(sample_tree, ["keep.md"])
+    _protected, directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, [], False, False
+    )
+    assert (sample_tree / "keep.md").resolve() not in directly_kept_dirs
+
+
+def test_dotdir_contents_survive_once_merged_into_kept_roots(tmp_path):
+    """The actual fix: once directly_kept_dirs is unioned into kept_roots
+    (as resolve_walk_sets does for both walks), a file nested inside a
+    --dot-dirs-kept directory is protected via is_under_kept_dir, not just
+    the directory shell."""
+    dotdir = tmp_path / ".config"
+    sub = dotdir / "sub"
+    sub.mkdir(parents=True)
+    nested = sub / "nested.txt"
+    nested.write_text("nested\n")
+
+    _exact_keep, kept_roots = build_exact_keep(tmp_path, [])
+    _protected, kept_roots = resolve_walk_sets(tmp_path, kept_roots, [], False, True)
+    assert is_under_kept_dir(nested.resolve(), kept_roots)
+    assert is_under_kept_dir(sub.resolve(), kept_roots)
+
+
+# ---------- build_protected_dirs: a named file's ancestors are shells ----------
+
+
+def test_ancestor_of_a_named_file_is_not_a_directly_kept_dir(named_file_tree):
+    """A directory dragged into exact_keep by a named descendant was never
+    named itself, so it must not reach directly_kept_dirs -- that set is
+    what protects a whole subtree."""
+    _exact_keep, kept_roots = build_exact_keep(named_file_tree, ["src/main.py"])
+    _protected, directly_kept_dirs = build_protected_dirs(
+        named_file_tree, kept_roots, [], False, False
+    )
+    assert (named_file_tree / "src").resolve() not in directly_kept_dirs
+
+
+def test_ancestor_of_a_named_file_is_still_protected(named_file_tree):
+    """The up direction is untouched: the ancestor still survives as a
+    shell, because a kept descendant sits inside it."""
+    _exact_keep, kept_roots = build_exact_keep(named_file_tree, ["src/main.py"])
+    protected, _directly_kept_dirs = build_protected_dirs(
+        named_file_tree, kept_roots, [], False, False
+    )
+    assert (named_file_tree / "src").resolve() in protected
+    assert named_file_tree.resolve() in protected
+
+
+def test_should_keep_named_file_survives_but_its_sibling_does_not(named_file_tree):
+    """The bug at the helper level: --keep src/main.py keeps src/ and
+    main.py, and removes junk.txt beside it."""
+    exact_keep, kept_roots = build_exact_keep(named_file_tree, ["src/main.py"])
+    protected, kept_roots = resolve_walk_sets(
+        named_file_tree, kept_roots, [], False, False
+    )
+
+    def keep(p):
+        return should_keep(
+            p, named_file_tree, exact_keep, [], False, False, protected, kept_roots
+        )
+
+    src = named_file_tree / "src"
+    assert keep(src)
+    assert keep(src / "main.py")
+    assert not keep(src / "junk.txt")
+
+
+# ---------- resolve_walk_sets ----------
+
+
+def test_resolve_walk_sets_merges_directly_kept_dirs_into_kept_roots(tmp_path):
+    """The union the walks depend on: a directory kept only via --dot-dirs
+    comes back inside kept_roots, so its contents are protected too."""
+    dotdir = tmp_path / ".config"
+    dotdir.mkdir()
+    (dotdir / "settings.json").write_text("{}\n")
+    _protected, kept_roots = resolve_walk_sets(tmp_path, set(), [], False, True)
+    assert dotdir.resolve() in kept_roots
+
+
+def test_resolve_walk_sets_keeps_the_entries_it_was_given(sample_tree):
+    """The named entries are merged with the discovered ones, not replaced
+    by them."""
+    _exact_keep, named = build_exact_keep(sample_tree, ["keep.md"])
+    _protected, kept_roots = resolve_walk_sets(sample_tree, named, [], False, False)
+    assert named <= kept_roots
+
+
+def test_resolve_walk_sets_leaves_protected_dirs_untouched(sample_tree):
+    """Only the second return value is folded -- protected_dirs comes
+    straight through from build_protected_dirs."""
+    _exact_keep, named = build_exact_keep(sample_tree, ["src/main.py"])
+    expected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, named, ["*.md"], False, False
+    )
+    protected, _kept_roots = resolve_walk_sets(
+        sample_tree, named, ["*.md"], False, False
+    )
+    assert protected == expected
+
+
 # ---------- should_keep (integration of all three signals) ----------
 
 
 def test_should_keep_true_for_file_under_exact_kept_directory(sample_tree):
     exact_keep, kept_roots = build_exact_keep(sample_tree, ["src/"])
-    protected = build_protected_dirs(sample_tree, exact_keep, [], False, False)
+    protected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, [], False, False
+    )
     main_py = sample_tree / "src" / "main.py"
     assert should_keep(
         main_py, sample_tree, exact_keep, [], False, False, protected, kept_roots
@@ -218,7 +426,9 @@ def test_should_keep_true_for_file_under_exact_kept_directory(sample_tree):
 
 def test_should_keep_false_for_unrelated_file(sample_tree):
     exact_keep, kept_roots = build_exact_keep(sample_tree, ["src/"])
-    protected = build_protected_dirs(sample_tree, exact_keep, [], False, False)
+    protected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, [], False, False
+    )
     drop_txt = sample_tree / "drop.txt"
     assert not should_keep(
         drop_txt, sample_tree, exact_keep, [], False, False, protected, kept_roots
@@ -228,7 +438,9 @@ def test_should_keep_false_for_unrelated_file(sample_tree):
 def test_should_keep_true_for_protected_dir_sibling_via_glob(sample_tree):
     exact_keep, kept_roots = build_exact_keep(sample_tree, ["*.md"])
     patterns = ["*.md"]
-    protected = build_protected_dirs(sample_tree, exact_keep, patterns, False, False)
+    protected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, patterns, False, False
+    )
     notes_dir = sample_tree / "notes"
     assert should_keep(
         notes_dir,
@@ -248,7 +460,9 @@ def test_should_keep_false_for_sibling_not_itself_kept(sample_tree):
     exact-kept directory, so it should not survive."""
     exact_keep, kept_roots = build_exact_keep(sample_tree, ["*.md"])
     patterns = ["*.md"]
-    protected = build_protected_dirs(sample_tree, exact_keep, patterns, False, False)
+    protected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, patterns, False, False
+    )
     scratch = sample_tree / "notes" / "scratch.txt"
     assert not should_keep(
         scratch,
@@ -267,7 +481,79 @@ def test_should_keep_true_for_path_scoped_pattern_parent_directory(sample_tree):
     (and root) into the protected set, even though "src" itself matches
     nothing in the pattern."""
     patterns = ["src/*.py"]
-    exact_keep, _kept_roots = build_exact_keep(sample_tree, patterns)
-    protected = build_protected_dirs(sample_tree, exact_keep, patterns, False, False)
+    _exact_keep, kept_roots = build_exact_keep(sample_tree, patterns)
+    protected, _directly_kept_dirs = build_protected_dirs(
+        sample_tree, kept_roots, patterns, False, False
+    )
     assert (sample_tree / "src").resolve() in protected
     assert sample_tree.resolve() in protected
+
+
+# ---------- is_real_dir (symlinks are never treated as directories) ----------
+
+
+def test_is_real_dir_true_for_a_regular_directory(sample_tree):
+    assert is_real_dir(sample_tree / "src")
+
+
+def test_is_real_dir_false_for_a_symlink_to_a_directory(tmp_path):
+    target = tmp_path / "outside"
+    target.mkdir()
+    link = tmp_path / "link_to_outside"
+    link.symlink_to(target)
+    assert not is_real_dir(link)
+
+
+def test_is_real_dir_false_for_a_regular_file(sample_tree):
+    assert not is_real_dir(sample_tree / "keep.md")
+
+
+def test_is_real_dir_false_for_a_dangling_symlink(tmp_path):
+    link = tmp_path / "broken"
+    link.symlink_to(tmp_path / "does_not_exist")
+    assert not is_real_dir(link)
+
+
+def test_directly_kept_symlinked_dot_dir_still_lands_in_directly_kept_dirs(tmp_path):
+    """A directly-kept symlinked directory still gets classified as one in
+    build_protected_dirs -- this stays true even though nothing is ever
+    descended into on the far side of it (see DESIGN.md, "Symlinks are
+    never descended into"): the classification is harmless once nothing
+    walks past it, not wrong."""
+    target = tmp_path / "outside"
+    target.mkdir()
+    dotdir = tmp_path / ".config"
+    dotdir.symlink_to(target)
+    _protected, directly_kept_dirs = build_protected_dirs(
+        tmp_path, set(), [], False, True
+    )
+    assert dotdir in directly_kept_dirs
+
+
+# ---------- narrowing-pattern hints ----------
+
+
+def test_deepen_pattern_inserts_globstar_before_the_last_segment():
+    assert deepen_pattern("/*.md") == "**/*.md"
+    assert deepen_pattern("src/*.py") == "src/**/*.py"
+    assert deepen_pattern("src/weed_out/*.py") == "src/weed_out/**/*.py"
+
+
+def test_no_hints_without_a_candidate_pattern(sample_tree):
+    """Bare patterns and patterns already using ** are never candidates, so
+    the tree is not walked at all for them."""
+    assert narrowing_pattern_hints(sample_tree, []) == []
+    assert narrowing_pattern_hints(sample_tree, ["*.md"]) == []
+    assert narrowing_pattern_hints(sample_tree, ["**/*.md"]) == []
+
+
+def test_hint_reports_what_the_deep_form_would_have_matched(sample_tree):
+    (hint,) = narrowing_pattern_hints(sample_tree, ["/*.md"])
+    assert "'/*.md' matches 1 path, but '**/*.md' would match 2." in hint
+
+
+def test_no_hint_when_the_deep_form_matches_no_more(sample_tree):
+    """A deliberately scoped pattern is compared against its own ** form,
+    not against every file of that name under PATH -- so scoping something
+    that has nothing nested below it stays silent."""
+    assert narrowing_pattern_hints(sample_tree, ["notes/*.md"]) == []

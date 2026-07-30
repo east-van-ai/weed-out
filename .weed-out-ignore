@@ -1,8 +1,14 @@
-src/weed_out/*.py
+# for orphan release on GitHub
+
+.github/**/*.yaml
+.gitignore
+.weed-out-ignore
+src/**/*.py
 tests/*.py
 CHANGELOG.md
+DESIGN.md
 LICENSE
 pyproject.toml
 README.md
-.weed-out-ignore
-.gitignore
+requirements-dev.txt
+requirements.txt

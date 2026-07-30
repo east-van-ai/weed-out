@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "weed-out"
-version = "0.1.0"
+version = "0.2.0"
 description = "Delete everything in a directory tree except what you explicitly say to keep."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Go Nakamaru" }]
-keywords = ["cli", "cleanup", "filesystem"]
-dependencies = []
+keywords = ["cli", "cleanup", "filesystem", "orphan release branch"]
+dependencies = ["Send2Trash>=1.8"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/gonakamaru/weed-out"
+Homepage = "https://github.com/east-van-ai/weed-out"
 
 [project.scripts]
 weed-out = "weed_out.cli:main"
