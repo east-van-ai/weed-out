@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weed-out"
+version = "0.2.0"
+description = "Delete everything in a directory tree except what you explicitly say to keep."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Go Nakamaru" }]
+keywords = ["cli", "cleanup", "filesystem", "orphan release branch"]
+dependencies = ["Send2Trash>=1.8"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/east-van-ai/weed-out"
+
+[project.scripts]
+weed-out = "weed_out.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.pytest.ini_options]
+# sys capture required for Option A subprocess tests (local only, skipped in CI)
+addopts = "--capture=sys"
+testpaths = ["tests"]
