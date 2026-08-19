@@ -1,5 +1,6 @@
-# for orphan release on GitHub
+# weed-out <https://github.com/east-van-ai/weed-out>
 
+.git/
 .github/**/*.yaml
 .gitignore
 .weed-out-ignore
@@ -10,5 +11,3 @@ DESIGN.md
 LICENSE
 pyproject.toml
 README.md
-requirements-dev.txt
-requirements.txt

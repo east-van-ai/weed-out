@@ -2,6 +2,7 @@
 
 import fnmatch
 import os.path
+import sys
 from pathlib import Path
 
 
@@ -107,6 +108,55 @@ def read_ignore_file(root: Path) -> list[str]:
             continue
         entries.append(line)
     return entries
+
+
+def resolve_keep_list(root: Path, keep_arg):
+    """Merge --keep with the ignore file into the inputs both walks take.
+
+    Returns `(exact_keep, kept_roots, patterns, keep_everything)`.
+    `keep_arg` is the raw --keep value, or None. When neither source
+    yields an entry, the list resolves to `--keep "."` and
+    `keep_everything` says so, so the caller can announce or refuse it
+    (see DESIGN.md, "An absent keep list keeps everything").
+    """
+    keep_entries = [x.strip() for x in (keep_arg or "").split(",") if x.strip()]
+    ignore_entries = read_ignore_file(root)
+    # dict.fromkeys, not set(): dedupes without shuffling, so a pattern's
+    # warnings surface in the order it was given (see DESIGN.md).
+    raw_list = list(dict.fromkeys(keep_entries + ignore_entries))
+    keep_everything = not raw_list
+    if keep_everything:
+        # "." normalizes to root, and a directly-kept directory protects
+        # its whole subtree, so no walk needs a special case.
+        raw_list = ["."]
+    patterns = [x for x in raw_list if is_glob(x)]
+    exact_keep, kept_roots = build_exact_keep(root, raw_list)
+    return exact_keep, kept_roots, patterns, keep_everything
+
+
+def warn_keep_everything() -> None:
+    """Note on stderr that an absent keep list was read as "keep everything".
+
+    Read-only surfaces only, like `warn_narrowing_patterns`. Under
+    `--commit` an absent keep list is an error rather than a note, so
+    this never follows a destructive run.
+    """
+    print(
+        "weed-out: no keep entries specified, so everything is kept "
+        '(as if --keep "."). Nothing would be removed.',
+        file=sys.stderr,
+    )
+
+
+def warn_narrowing_patterns(root: Path, patterns: list[str]) -> None:
+    """Warn on stderr about `--keep` patterns that match less than they look like.
+
+    Only the read-only surfaces call this. Under `--commit` the advice
+    comes too late to act on, and a stderr line surfacing after a
+    destructive run reads as an error report on the run itself.
+    """
+    for hint in narrowing_pattern_hints(root, patterns):
+        print(hint, file=sys.stderr)
 
 
 def build_exact_keep(root: Path, keep_list: list[str]) -> tuple[set[Path], set[Path]]:

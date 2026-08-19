@@ -1,11 +1,73 @@
-"""The delete/trash/dry-run walk."""
+"""The delete/trash/dry-run walk, and the removal pipeline both commands share."""
 
 import shutil
+import sys
 from pathlib import Path
 
 from send2trash import send2trash
 
-from weed_out.keep import is_real_dir, resolve_walk_sets, should_keep
+from weed_out.args import EXIT_ERROR, EXIT_OK
+from weed_out.keep import (
+    is_real_dir,
+    resolve_keep_list,
+    resolve_walk_sets,
+    should_keep,
+    warn_keep_everything,
+    warn_narrowing_patterns,
+)
+
+
+def run_removal(root: Path, args, command: str, usage: str) -> int:
+    """Resolve the keep list and run the walk for `delete` or `trash`.
+
+    The shared pipeline behind `cli_delete` and `cli_trash`: the two
+    commands differ only in disposal, and `command` is the same string
+    `delete_rest` takes as its mode, so nothing here branches beyond
+    wording. `usage` is the calling command's usage line, printed under
+    the one error this pipeline can raise itself.
+    """
+    exact_keep, kept_roots, patterns, keep_everything = resolve_keep_list(
+        root, args.keep
+    )
+
+    if keep_everything and args.commit:
+        # An absent keep list under --commit is likelier a forgotten
+        # argument than an intention (see DESIGN.md, "An absent keep
+        # list keeps everything").
+        print(
+            "weed-out: no keep entries specified "
+            "(pass --keep or add a .weed-out-ignore file)",
+            file=sys.stderr,
+        )
+        print(f"Usage: {usage}", file=sys.stderr)
+        return EXIT_ERROR
+
+    mode = command if args.commit else "dry-run"
+
+    delete_rest(
+        root,
+        exact_keep,
+        patterns,
+        args.dot_files,
+        args.dot_dirs,
+        mode,
+        kept_roots,
+    )
+
+    if mode == "dry-run":
+        if keep_everything:
+            # The usual trailer would point at a --commit that exits 1.
+            warn_keep_everything()
+        else:
+            disposal = (
+                "permanently delete"
+                if command == "delete"
+                else "send everything to the OS trash"
+            )
+            print(f"\nDry run only. Re-run with --commit to {disposal}.")
+        warn_narrowing_patterns(root, patterns)
+
+    return EXIT_OK
 
 
 def collect_targets(

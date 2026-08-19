@@ -14,8 +14,9 @@
 #
 # Usage:
 #
-#    weed-out <delete | trash | tree> PATH [--keep LIST]
-#             [--dry-run | --commit] [--dot-files] [--dot-dirs]
+#    weed-out delete PATH [--keep LIST] [--dry-run | --commit] [options]
+#    weed-out trash  PATH [--keep LIST] [--dry-run | --commit] [options]
+#    weed-out tree   PATH [--keep LIST] [options]
 #
 # Commands:
 #
@@ -29,19 +30,26 @@
 # directory. A .weed-out-ignore file there (newline-separated, # comments
 # and blank lines allowed) is read automatically and merged with --keep.
 #
-# Options:
+# Run a command with nothing else after it for its own documentation,
+# including the options it takes:
 #
-#    --keep LIST         comma-separated files/dirs/glob patterns to keep.
-#                        Optional if .weed-out-ignore supplies entries
-#                        instead -- at least one of the two is required.
-#    --dry-run           report what would be removed, touching nothing.
-#                        The default for `delete` and `trash`.
-#    --commit            actually carry it out. Permanent for `delete`.
-#    --dot-files         keep dotfiles, even if not listed in --keep
-#    --dot-dirs          keep dot-directories, even if not listed in --keep
+#    weed-out delete
+#    weed-out trash
+#    weed-out tree
 #
-# Flags come after the command and PATH; their order among themselves is
-# free. Bare `weed-out` prints this help.
+# PATH comes first, then flags, whose order among themselves is free.
+# Spell flags in full: an abbreviation like `--com` is rejected, so it
+# can never stand in for `--commit`. Bare `weed-out` prints this text
+# and exits 0. Asking is not a usage error.
+#
+# weed-out reads no piped input.
+#
+# Exit codes:
+#
+#    0:     success, and documentation
+#    1:     weed-out's own error, a PATH missing, stray, or not a
+#           directory, or --commit with no keep entries
+#    2:     an unknown command, an unknown flag, or a bad value
 #
 # License: MIT
 # ==============================================
@@ -50,108 +58,94 @@
 import sys
 from pathlib import Path
 
-from weed_out.args import USAGE, parse_args
-from weed_out.delete import delete_rest
-from weed_out.keep import (
-    build_exact_keep,
-    is_glob,
-    narrowing_pattern_hints,
-    read_ignore_file,
-    resolve_walk_sets,
-)
-from weed_out.tree import format_summary, print_tree
+from weed_out import cli_delete, cli_trash, cli_tree
+from weed_out.args import EXIT_ARGPARSE, EXIT_ERROR, EXIT_OK, build_parser
+
+__all__ = ["EXIT_ARGPARSE", "EXIT_ERROR", "EXIT_OK", "main"]
+
+# Each command's surface module carries its own documentation, usage
+# line, and run(). The table adds nothing else: every command reads the
+# same single PATH slot.
+COMMANDS = {
+    "delete": cli_delete,
+    "trash": cli_trash,
+    "tree": cli_tree,
+}
+
+
+def leading_paths(tokens):
+    """Return the tokens ahead of the first flag.
+
+    The documented grammar puts PATH before every flag, so the slot is
+    read off the front of the command line. What argparse resolved from
+    anywhere else is discarded, since how much it tolerates depends on
+    the interpreter. See DESIGN.md, "Positions are decided, not
+    inferred".
+    """
+    paths = []
+    for token in tokens:
+        if token.startswith("-"):
+            break
+        paths.append(token)
+    return paths
+
+
+def usage_error(module, message):
+    """Report a command line weed-out could not read, with that command's usage.
+
+    Grammar errors only. A readiness failure (PATH not a directory)
+    prints no usage line: the command line was read fine, and usage
+    beside it would answer a question nobody asked (see DESIGN.md,
+    "PATH validation").
+    """
+    print(f"weed-out: {message}", file=sys.stderr)
+    print(f"Usage: {module.USAGE}", file=sys.stderr)
+    return EXIT_ERROR
 
 
 def main():
-    """Parse arguments, enforce the CLI grammar, and run the keep/delete pipeline."""
-    if len(sys.argv) == 1:
+    """Parse arguments, enforce the CLI grammar, and dispatch to a command.
 
-        # a human typed bare `weed-out`
-        if sys.stdin.isatty():
-            print(__doc__, file=sys.stdout)
-            sys.exit(0)
+    A bare word is a question and gets documentation, exit 0. Any other
+    shortfall in the PATH slot is a slip and gets an error, exit 1.
+    Argparse keeps the vocabulary it owns: an unknown command, an
+    unknown flag, or a bad value, exiting 2.
+    """
+    tokens = sys.argv[1:]
 
-        # piped input, real usage error -- weed-out operates on directories, not streams
-        print(
-            "weed-out: weed-out takes no piped input.",
-            file=sys.stderr,
+    if not tokens:
+        print(__doc__.strip())
+        return EXIT_OK
+
+    if len(tokens) == 1 and tokens[0] in COMMANDS:
+        print(COMMANDS[tokens[0]].__doc__.strip())
+        return EXIT_OK
+
+    parser = build_parser()
+    args, extras = parser.parse_known_args(tokens)
+
+    if any(extra.startswith("-") for extra in extras):
+        parser.parse_args(tokens)  # argparse names the flag better, exit 2
+
+    module = COMMANDS[args.command]
+
+    # Not args.path: what argparse resolves from a token after a flag
+    # varies by interpreter, and the grammar should not.
+    paths = leading_paths(tokens[1:])
+    if not paths:
+        return usage_error(module, f"{args.command} needs PATH")
+    if len(paths) > 1:
+        return usage_error(
+            module, f"{args.command} takes nothing after PATH: {paths[1]!r}"
         )
-        print(USAGE, file=sys.stderr)
-        sys.exit(1)
 
-    args = parse_args()
-    root = Path(args.path).resolve()
+    root = Path(paths[0]).resolve()
     if not root.is_dir():
         print(f"weed-out: {root} is not a directory", file=sys.stderr)
-        sys.exit(1)
+        return EXIT_ERROR
 
-    keep_entries = [x.strip() for x in (args.keep or "").split(",") if x.strip()]
-    ignore_entries = read_ignore_file(root)
-    raw_list = keep_entries + ignore_entries
-    if not raw_list:
-        print(
-            "weed-out: no keep entries specified "
-            "(pass --keep or add a .weed-out-ignore file)",
-            file=sys.stderr,
-        )
-        print(USAGE, file=sys.stderr)
-        sys.exit(1)
-    patterns = [x for x in raw_list if is_glob(x)]
-    exact_keep, kept_roots = build_exact_keep(root, raw_list)
-
-    if args.command == "tree":
-        protected_dirs, walk_kept_roots = resolve_walk_sets(
-            root, kept_roots, patterns, args.dot_files, args.dot_dirs
-        )
-        print(f"Tree under {root} ([REMOVE] marks what would be removed):\n")
-        tally = print_tree(
-            root,
-            root,
-            exact_keep,
-            patterns,
-            args.dot_files,
-            args.dot_dirs,
-            protected_dirs,
-            walk_kept_roots,
-        )
-        print(f"\n{format_summary(*tally)}")
-        warn_narrowing_patterns(root, patterns)
-        return
-
-    # `tree` has already returned, so args.command is "delete" or "trash" here --
-    # the same strings delete_rest() expects for its mode.
-    mode = args.command if args.commit else "dry-run"
-
-    delete_rest(
-        root,
-        exact_keep,
-        patterns,
-        args.dot_files,
-        args.dot_dirs,
-        mode,
-        kept_roots,
-    )
-
-    if mode == "dry-run":
-        disposal = (
-            "permanently delete"
-            if args.command == "delete"
-            else "send everything to the OS trash"
-        )
-        print(f"\nDry run only. Re-run with --commit to {disposal}.")
-        warn_narrowing_patterns(root, patterns)
-
-
-def warn_narrowing_patterns(root: Path, patterns: list[str]) -> None:
-    """Warn on stderr about `--keep` patterns that match less than they look like.
-
-    Only the read-only surfaces call this. Under `--commit` the advice
-    comes too late to act on, and a stderr line surfacing after a
-    destructive run reads as an error report on the run itself.
-    """
-    for hint in narrowing_pattern_hints(root, patterns):
-        print(hint, file=sys.stderr)
+    return module.run(root, args)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -4,20 +4,6 @@
 explicitly tell it to keep, the inverse of `rm`/`find -delete`-style
 cleanup.
 
-## Table of Contents
-
-- [weed-out - delete everything except what you keep](#weed-out---delete-everything-except-what-you-keep)
-  - [Table of Contents](#table-of-contents)
-  - [Why](#why)
-  - [Example output](#example-output)
-  - [Install](#install)
-  - [Usage](#usage)
-    - [How `--keep` works](#how---keep-works)
-    - [The `.weed-out-ignore` file](#the-weed-out-ignore-file)
-    - [Exit codes](#exit-codes)
-  - [Notes](#notes)
-  - [Use of AI](#use-of-ai)
-
 ## Why
 
 Most cleanup tools are exclude-list shaped: `rm`, `find -delete`, most
@@ -57,10 +43,10 @@ about what survives.
 ```text
 Tree under . ([REMOVE] marks what would be removed):
 
+├── build/  [REMOVE]
 ├── src/
 │   └── main.py
 ├── README.md
-├── build/  [REMOVE]
 └── notes.txt  [REMOVE]
 
 3 kept, 2 to remove (1 directory collapsed -- contents not listed).
@@ -83,7 +69,7 @@ of deleting them outright. `pipx`/`pip` install it automatically, with
 no separate step. Tested in CI on Python 3.9 through 3.14.
 
 ```bash
-pipx install "git+https://github.com/east-van-ai/weed-out.git@stable"
+pipx install "git+https://github.com/east-van-ai/weed-out.git"
 ```
 
 `pipx` installs Python CLI tools into isolated environments, no
@@ -95,9 +81,10 @@ more than one Python CLI tool.
 Bare `weed-out` prints this usage summary. It doesn't read piped
 input, its unit of work is a directory, not a stream.
 
-The grammar is always `weed-out COMMAND PATH [flags]`. `PATH` is
-required (use `.` for the current directory), and flags come after it,
-in any order among themselves.
+The grammar is always `weed-out COMMAND PATH [flags]`.
+
+`PATH` is required (use `.` for the current directory), and flags
+come after it, in any order among themselves.
 
 ```bash
 # Preview as a tree with [REMOVE] tags, nothing touched
@@ -127,20 +114,28 @@ weed-out delete . --keep "src/**/*.py,tests/*.py,README.md" --commit
 
 | Flag | Description |
 | --- | --- |
-| `--keep` | Comma-separated list of files, directories, and glob patterns to keep. Optional if a `.weed-out-ignore` file at `PATH` supplies the keep list instead, but at least one of the two is required. |
+| `--keep` | Comma-separated list of files, directories, and glob patterns to keep. Optional if a `.weed-out-ignore` file at `PATH` supplies the keep list instead. With neither, everything is kept and `--commit` is refused. |
 | `--dry-run` | Explicitly report what would be removed without touching anything. This is what `delete`/`trash` do anyway when `--commit` is absent. |
 | `--commit` | Actually carry the removal out. Permanent for `delete`. Mutually exclusive with `--dry-run`, and not accepted by `tree`. |
-| `--dot-files` | Keep dotfiles, even if not listed in `--keep`. |
-| `--dot-dirs` | Keep dot-directories, even if not listed in `--keep`. |
+| `--dot-files` | Keep dotfiles, even if not in keep list. |
+| `--dot-dirs` | Keep dot-directories, even if not in keep list. |
 
 ### How `--keep` works
+
+With no keep list at all (no `--keep`, no `.weed-out-ignore`), a run
+keeps everything, exactly as if you had passed `--keep "."`. Nothing is
+tagged and nothing would be removed, so `weed-out tree PATH` is a safe
+way to look at a directory before deciding what to protect. `--commit`
+is the exception: it refuses to run without a keep list and exits 1,
+because there an empty list is far likelier to be a forgotten argument
+than a deliberate choice.
 
 Entries can be:
 
 - **Exact paths**: `src/`, `README.md`, `.gitignore`
 - **Glob patterns**: `*.md`, `test_*.py`, `src/**/*.py`
 
-Glob patterns come in two flavors, decided by whether the pattern
+Glob patterns come in two flavours, decided by whether the pattern
 contains a `/`.
 
 **Bare patterns** (no `/`) match by filename at any depth. `*.md`
@@ -170,7 +165,7 @@ A leading or trailing `/` on a pattern is optional and stripped before
 matching, so `/src/*.py` and `src/*.py` behave the same. Gitignore-style
 matching, deliberately.
 
-Watch the slash, though: it's what decides which flavor you get. `*.md`
+Watch the slash, though: it's what decides which flavour you get. `*.md`
 has no `/`, so it's a bare pattern and keeps every `.md` file at any
 depth. `/*.md` has one, so it's path-scoped, and after the leading slash
 is stripped it's a single segment: top-level `.md` files only. Adding
@@ -209,15 +204,16 @@ Drop a `.weed-out-ignore` file at `PATH` to check a keep list into
 the repo instead of retyping it as a `--keep` string every time:
 
 ```text
+# example .weed-out-ignore contents
+
 .git/
 .gitignore
 .weed-out-ignore
 src/**/*.py
 tests/*.py
 LICENSE
-pyproject.toml
 README.md
-requirements.txt
+pyproject.toml
 ```
 
 - One entry per line, same exact-path/glob-pattern rules as `--keep`,
@@ -238,16 +234,17 @@ requirements.txt
 
 ### Exit codes
 
-- `0`: success
-- `1`: any error `weed-out` raises itself (usage errors, `PATH` not a
-    directory, or neither `--keep` nor `.weed-out-ignore` supplying any
-    keep entries)
-- `2`: argparse's own errors (unknown flag, a missing or unknown
-    command, a missing `PATH`, or `--dry-run` and `--commit` together)
+- `0`: success, and documentation (a bare `weed-out`, or a command word
+    on its own)
+- `1`: any error `weed-out` raises itself (a missing `PATH`, a stray
+    token after it, `PATH` not a directory, or `--commit` with neither
+    `--keep` nor `.weed-out-ignore` supplying any keep entries)
+- `2`: argparse's own errors (unknown flag, unknown command, a bad
+    value, or `--dry-run` and `--commit` together)
 
-Note that the two "bad path" cases differ: a *missing* `PATH` is
-argparse's error and exits 2, while a `PATH` that isn't a directory is
-`weed-out`'s own and exits 1.
+The split follows who is complaining. Anything about the shape of the
+command line as `weed-out` defines it is its own error and exits 1;
+anything about vocabulary argparse owns exits 2.
 
 ## Notes
 
@@ -287,7 +284,7 @@ and open questions for where this could go next.
 This project is built with Artificial Intelligence (AI), deliberately
 and in the open. Code and documentation are written in collaboration
 with remote and local AI; design decisions, code review, and final
-judgment stay human.
+judgement stay human.
 
 ---
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "weed-out"
-version = "0.2.0"
+version = "0.3.0"
 description = "Delete everything in a directory tree except what you explicitly say to keep."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -20,6 +20,18 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
+# Local tooling, never shipped. A dependency group stays out of the wheel and
+# off PyPI, which an optional-dependencies extra would not. Install with
+# `pip install -e . --group dev` (needs pip 25.1+). The ruff and black pins are
+# exact on purpose: the pin is what freezes ruff's default rule set.
+[dependency-groups]
+dev = [
+    "black==25.11.0",
+    "pytest",
+    "pytest-cov",
+    "ruff==0.16.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/east-van-ai/weed-out"
 
@@ -33,6 +45,6 @@ where = ["src"]
 package-dir = { "" = "src" }
 
 [tool.pytest.ini_options]
-# sys capture required for Option A subprocess tests (local only, skipped in CI)
+# sys capture required by the subprocess-based integration tests
 addopts = "--capture=sys"
 testpaths = ["tests"]

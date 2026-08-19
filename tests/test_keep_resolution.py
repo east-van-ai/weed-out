@@ -90,6 +90,57 @@ def test_exact_keep_collapses_dot_and_dot_dot_lexically(sample_tree):
     assert (sample_tree / "src") in kept_roots
 
 
+# ---------- "." keeps everything ----------
+#
+# See DESIGN.md, "An absent keep list keeps everything". `main()` swaps an
+# empty keep list for ["."], so these state why that swap needs no other
+# machinery: "." names root, and root protects its whole subtree.
+
+
+def test_dot_resolves_to_root_itself(sample_tree):
+    exact_keep, kept_roots = build_exact_keep(sample_tree, ["."])
+    assert exact_keep == {sample_tree}
+    assert kept_roots == {sample_tree}
+
+
+def test_dot_adds_no_ancestors_above_root(sample_tree):
+    """The parent chain stops at root, so nothing outside PATH is named."""
+    exact_keep, _ = build_exact_keep(sample_tree, ["."])
+    assert not any(p in exact_keep for p in sample_tree.parents)
+
+
+def test_keeping_root_keeps_every_entry_at_every_depth(sample_tree):
+    """The whole point: should_keep says yes to everything under root."""
+    exact_keep, kept_roots = build_exact_keep(sample_tree, ["."])
+    protected_dirs, kept_roots = resolve_walk_sets(
+        sample_tree, kept_roots, [], False, False
+    )
+    for entry in sample_tree.rglob("*"):
+        assert should_keep(
+            entry,
+            sample_tree,
+            exact_keep,
+            [],
+            False,
+            False,
+            protected_dirs,
+            kept_roots,
+        ), entry
+
+
+def test_keeping_root_survives_on_the_kept_roots_route(sample_tree):
+    """Not via protected_dirs: rglob never yields root, so nothing is
+    directly kept and protected_dirs stays empty. is_under_kept_dir is
+    what carries every entry."""
+    _, kept_roots = build_exact_keep(sample_tree, ["."])
+    protected_dirs, kept_roots = resolve_walk_sets(
+        sample_tree, kept_roots, [], False, False
+    )
+    assert protected_dirs == set()
+    assert kept_roots == {sample_tree}
+    assert is_under_kept_dir(sample_tree / "notes" / "design.md", kept_roots)
+
+
 # ---------- build_exact_keep: identity resolution never dereferences ----------
 
 

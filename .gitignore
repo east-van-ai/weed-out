@@ -26,9 +26,6 @@ tests/data/*
 .idea/
 .vscode/
 
-# Claude local settings
-.claude/settings.local.json
-
 # markdownlint
 .markdownlint.json
 .markdownlintignore

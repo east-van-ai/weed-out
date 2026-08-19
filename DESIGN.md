@@ -1,33 +1,5 @@
 # weed-out DESIGN
 
-## Table of Contents
-
-- [weed-out DESIGN](#weed-out-design)
-  - [Table of Contents](#table-of-contents)
-  - [Architecture](#architecture)
-  - [File Tree](#file-tree)
-  - [CLI Grammar](#cli-grammar)
-    - [Why the action is a command](#why-the-action-is-a-command)
-    - [The bare verb is a dry run, deliberately](#the-bare-verb-is-a-dry-run-deliberately)
-    - [`PATH` is required](#path-is-required)
-    - [Bare invocation](#bare-invocation)
-    - [Exit codes](#exit-codes)
-  - [The Keep/Delete Pipeline](#the-keepdelete-pipeline)
-    - [Two-phase keep resolution: exact paths vs. glob patterns](#two-phase-keep-resolution-exact-paths-vs-glob-patterns)
-    - [Path-scoped glob patterns](#path-scoped-glob-patterns)
-    - [Warning when a path pattern narrows](#warning-when-a-path-pattern-narrows)
-    - [`PATH` validation](#path-validation)
-    - [The `.weed-out-ignore` file](#the-weed-out-ignore-file)
-  - [Invariants](#invariants)
-    - [Survival propagates both ways](#survival-propagates-both-ways)
-    - [`should_keep` is the only authority on survival](#should_keep-is-the-only-authority-on-survival)
-    - [Identity resolution never dereferences](#identity-resolution-never-dereferences)
-    - [`is_real_dir` is the only authority on traversal](#is_real_dir-is-the-only-authority-on-traversal)
-    - [Collapsing doomed directories, and what the walks report](#collapsing-doomed-directories-and-what-the-walks-report)
-  - [Open Questions](#open-questions)
-  - [Known Bugs](#known-bugs)
-  - [Use of AI](#use-of-ai)
-
 ## Architecture
 
 `weed-out` requires Python 3.9 or newer and is built on the standard
@@ -43,42 +15,49 @@ to add more. The GitHub CI matrix tests Python 3.9 through 3.14.
 The implementation is split by responsibility: `src/weed_out/args.py`
 (argument parsing), `keep.py` (keep-list resolution and the
 protected-directory pass), `tree.py` (`tree` display), `delete.py` (the
-delete/trash/dry-run walk), and `cli.py` (just `main()`, wiring them
-into a pipeline). Data is plain `Path`/`set`/`str`; the only state is
-the filesystem being read and, on `delete`/`trash` with `--commit`,
-written.
+delete/trash/dry-run walk, and `run_removal`, the shared pipeline both
+removal commands run), and `cli.py` (the banner and the dispatch). Each
+command also has a thin surface module, `cli_delete.py`, `cli_trash.py`,
+`cli_tree.py`, holding that command's documentation and a `run()` that
+delegates to the engines. This is the house layout (`prg` is the
+multi-command reference); the surface modules exist so each command has
+a document of its own to print, not to hold logic. Data is plain
+`Path`/`set`/`str`; the only state is the filesystem being read and, on
+`delete`/`trash` with `--commit`, written.
 
-## File Tree
+### Dependencies live in `pyproject.toml` only
 
-Trimmed view of the layout
+There is no `requirements.txt` and no `requirements-dev.txt`. The
+runtime package sits in `[project] dependencies`, dev tooling in
+`[dependency-groups]`. One file, two tables, nothing to keep in sync by
+hand. Install both halves with one command:
 
-```text
-.
-├── .github/
-│   └── workflows/
-│       └── ci.yaml
-├── src/
-│   └── weed_out/
-│       ├── __init__.py
-│       ├── args.py
-│       ├── cli.py
-│       ├── delete.py
-│       ├── keep.py
-│       └── tree.py
-├── tests/
-│   ├── conftest.py
-│   ├── test_cli_integration.py
-│   ├── test_delete_walk.py
-│   └── test_keep_resolution.py
-├── .weed-out-ignore
-├── CHANGELOG.md
-├── DESIGN.md
-├── LICENSE
-├── pyproject.toml
-├── README.md
-├── requirements-dev.txt
-└── requirements.txt
+```bash
+pip install -e . --group dev
 ```
+
+The runtime file held `Send2Trash>=1.8`, and so does `pyproject.toml`.
+Two files answering one question, with nothing able to check one against
+the other. The dev file goes for a different reason. `weed-out` is
+installed with `pipx` and run, not cloned and contributed to, so a
+requirements file is onboarding scaffolding for a contributor who does
+not exist here.
+
+Dev tooling belongs in `[dependency-groups]` rather than
+`[project.optional-dependencies]`. An extra is published metadata: it
+lands in the wheel, appears on PyPI, and turns `pip install
+weed-out[dev]` into a supported offer. Dev tooling is a fact about the
+working copy, not about the installed artifact. A dependency group stays
+local and never ships.
+
+The dev pins stay exact while the runtime floor does not, and that
+asymmetry is deliberate. A pinned `ruff` freezes a rule set, so local
+and CI agree on what counts as a lint failure. `pytest` has no rule set
+to freeze and stays unpinned.
+
+`--group` needs pip 25.1 or newer, so CI upgrades pip before installing
+anything. The 3.9 leg of the matrix tops out at pip 26.0.1, which still
+clears that floor.
 
 ## CLI Grammar
 
@@ -109,6 +88,29 @@ the separate, explicit keystroke that makes it real. The bare verb is
 the safe end of a two-valued axis whose other end has to be spelled out,
 not a silent default concealing an invisible action.
 
+No interactive confirmation follows `--commit`. The flag is already the
+second step a prompt would supply, and it is typed on purpose rather
+than answered under momentum, which is the failure a prompt invites once
+it becomes routine. Worth revisiting only if a real accident happens.
+
+### Flags are spelled in full
+
+`argparse` matches any unambiguous prefix of a long flag unless
+`allow_abbrev=False` says otherwise. Left at the default, `--com` and
+even `--c` mean `--commit`. `--commit` is only a separate, explicit
+keystroke if it has to be typed whole, and a four-character prefix is
+short enough to arrive by a slip of the hand.
+
+The keyword has to be repeated on every subparser. `add_parser()` builds
+a fresh `ArgumentParser` from the keywords it is handed and inherits
+nothing else, so setting it on the top-level parser alone leaves
+`delete PATH --com` parsing happily. Every flag `weed-out` defines lives
+on a subparser. A fourth command would need the keyword too.
+
+Abbreviating the read-only flags while holding `--commit` to its full
+spelling was considered and dropped. One flag surface behaving two ways
+costs more to explain than the keystrokes it saves.
+
 ### `PATH` is required
 
 A required positional means the destructive form always states what it
@@ -125,43 +127,95 @@ disambiguate; a second would make `weed-out delete foo` ambiguous
 
 `--keep` is not strictly required: a `.weed-out-ignore` file at `PATH`
 can supply the keep list on its own (see "The `.weed-out-ignore` file"
-below). At least one of the two has to yield an entry.
+below). Neither is required under the read-only surfaces (see "An absent
+keep list keeps everything" below).
 
-### Bare invocation
+### Positions are decided, not inferred
 
-Bare `weed-out` on a TTY prints the module docstring (the usage banner)
-and exits 0. Its unit of work is a directory, not a stream, so bare
-`weed-out` with stdin attached to a pipe is a usage error (exit 1)
-rather than a help dump: printing help to stdout mid-pipeline would
-silently exit 0 into a pipeline expecting real output. Same convention
-as `docmap`.
+The command word is `sys.argv[1]` and `PATH` is `sys.argv[2]`, checked
+against those slots directly. `main()` reads the tokens ahead of the
+first flag (`leading_paths`) and discards whatever argparse resolved
+for the positional. Since Python 3.12 argparse back-fills a trailing
+optional positional from a token appearing after any number of flags,
+so `weed-out delete --keep "*.md" .` would parse happily and the
+accepted grammar would silently drift from the documented one, and
+drift by interpreter version at that.
+
+To make that possible, `PATH` is `nargs="?"` in the parser: optional to
+argparse so a bare command word reaches `main` and gets an answer, its
+parsed value unused. Argparse still owns the vocabulary (unknown
+command, unknown flag, bad value, the mode-flag pair), reported through
+`parse_known_args` plus a re-parse when an unknown flag is present,
+because argparse names the flag better. Shortfalls in the slots are
+ours: no `PATH`, or a stray token after it, exits 1 with the command's
+usage line.
+
+### An absent keep list keeps everything
+
+An empty keep list has two readings, and only one of them is safe:
+"keep nothing", which deletes everything under `PATH`, or "keep
+everything", which removes nothing. `weed-out` takes the second. The
+absent list resolves to `--keep "."`, which normalizes to `PATH` itself,
+and a directly-kept directory protects its whole subtree, so nothing in
+the walks needs a special case for it. Both read-only surfaces announce
+the substitution on stderr, so a user who forgot `--keep` is told why
+nothing is tagged.
+
+The error survives in exactly one place: `--commit` with nothing to keep
+still exits 1. There, an empty keep list is far likelier to be a
+misconfiguration than a deliberate choice (an unset variable in
+`weed-out delete "$DIR" --keep "$PATTERNS" --commit`), and exiting 0
+would leave the caller unable to tell a successful cleanup from a keep
+list that evaporated. Nothing would be deleted either way; the cost of a
+silent exit 0 is the signal, and the signal is worth keeping.
+
+This is the line `warn_narrowing_patterns` already sits on: leniency and
+advice belong to the surfaces that only look, while `--commit` is held
+to the stricter contract.
+
+### A bare word is a question
+
+Bare `weed-out` prints the usage banner (`cli.py`'s module docstring)
+and exits 0. A command word and nothing else at all prints that
+command's own docstring, exit 0. The test is `len(sys.argv) == 2`,
+never "the argument is missing": once any other token is present the
+user asked for something specific, and answering with help would hide
+the mistake. A missing `PATH` there is an error, exit 1.
+
+Stdin decides none of this. An earlier version gated the banner on
+`isatty()` and treated a non-terminal stdin as piped input, exit 1.
+That test is wider than it looks: `/dev/null`, which is what cron,
+`nohup`, and CI hand a process, is not a terminal either, so the same
+command line answered two ways depending on where it was launched.
+What was typed decides the answer. weed-out reads no piped input, and
+the banner says so.
 
 ### Exit codes
 
-- `0`: success (entries reported or removed, or bare-on-TTY printed
-  help).
-- `1`: every error `weed-out` raises itself (usage errors, `PATH` is
-  not a directory, or neither `--keep` nor `.weed-out-ignore` yielded
-  any keep entries).
-- `2`: argparse's own errors, left at argparse's convention (unknown
-  flag, missing or unknown command, missing `PATH`, or `--dry-run` and
-  `--commit` together).
+- `0`: success, and documentation (the banner, or a command's own doc).
+- `1`: every error `weed-out` raises itself (a missing `PATH`, a stray
+  token after it, `PATH` not a directory, or neither `--keep` nor
+  `.weed-out-ignore` yielded any keep entries *and* `--commit` was
+  passed).
+- `2`: argparse's own errors (unknown flag, unknown command, a bad
+  value, or `--dry-run` and `--commit` together).
 
-The two "bad path" cases therefore split: a *missing* `PATH` is
-argparse's (2), a `PATH` that parses but is not a directory is ours (1).
-Accepted rather than engineered away: remapping either would mean
-intercepting argparse, more machinery than the distinction earns. The
-rule for anything added later: when it is genuinely ambiguous who owns
-an error, it is ours, and it exits 1.
+The line falls where ownership falls: argparse keeps the vocabulary it
+owns, and the slots are ours (see "Positions are decided, not
+inferred"). A missing `PATH` was argparse's exit 2 before the slot rule
+moved it to ours. The rule for anything added later: when it is
+genuinely ambiguous who owns an error, it is ours, and it exits 1.
 
 All self-raised errors go to stderr as `weed-out: <message>`.
 
 ## The Keep/Delete Pipeline
 
-`main()` runs: parse args → grammar guards (bare invocation, `PATH`
-must be a directory) → resolve the keep list → either print the tree
-(the `tree` command, read-only) or walk and remove (`delete_rest`,
-read-only unless `--commit` was passed).
+`main()` runs: answer the bare words (the banner, or a command's own
+doc) → parse args → read the `PATH` slot and check it is a directory →
+dispatch to the command's `run()`, which resolves the keep list and
+either prints the tree (the `tree` command, read-only) or walks and
+removes (`run_removal` in `delete.py`, read-only unless `--commit` was
+passed).
 
 ### Two-phase keep resolution: exact paths vs. glob patterns
 
@@ -276,9 +330,10 @@ error report on the run itself.
 `main()` checks `root.is_dir()` before any walk starts and fails loudly
 (`weed-out: {root} is not a directory`, exit 1) rather than silently
 walking nothing, using the same error-message convention `docmap` does.
-This is the *self-raised* half of the "bad path" story: argparse has
-already rejected a missing `PATH` with exit 2 by the time this check
-runs (see "Exit codes" above).
+No usage line accompanies it: this is a readiness failure, not a
+grammar error. The command line was read fine, and printing usage
+beside it would answer a question nobody asked. `docmap` and `prg`
+draw the same line.
 
 ### The `.weed-out-ignore` file
 
@@ -296,9 +351,10 @@ doesn't have to be retyped on every invocation.
 - **`--keep` is therefore optional.** `read_ignore_file` (`keep.py`)
   supplies entries the same way `--keep` does, so `weed-out tree .`
   works on its own when the file exists. If **neither** source yields an
-  entry, `weed-out` exits 1 rather than running with an empty keep list:
-  empty means "delete everything in `PATH`," and silence must never be
-  able to mean that.
+  entry, the run keeps everything rather than nothing, and only
+  `--commit` treats that as an error (see "An absent keep list keeps
+  everything"). Silence must never be able to mean "delete everything in
+  `PATH`."
 - **Comments and blank lines are skipped** (`#`-prefixed, or empty
   after stripping), following `.gitignore` convention. It matters here
   because the file is meant to be a reviewable, git-blame-able record,
@@ -308,11 +364,12 @@ doesn't have to be retyped on every invocation.
   joined string because it is a CLI flag; that's a constraint of the
   flag, not a design choice worth repeating in a file. One entry per
   line diffs cleanly in git, which is the whole point of checking it in.
-- **Merges with `--keep`, doesn't override it.** Anything named in
-  either source survives, and the union feeds the same two-phase
-  resolution (`build_exact_keep`/`build_protected_dirs`). Not a policy
-  call with real tension: since neither source can say "delete this,"
-  there is nothing for one to override in the other.
+- **Merges with `--keep`, doesn't override it.** No real conflict here,
+  since neither source can say "delete this." Anything named in either
+  source survives and is fed to the same two-phase resolution
+  (`build_exact_keep`/`build_protected_dirs`). The merge dedupes and
+  preserves order (`dict.fromkeys`, `--keep` first), so warnings come
+  out in a consistent order across runs.
 - **No negation syntax: by design, not "not yet."** A `.gitignore`-style
   `!pattern` ("keep all `.md` except `DRAFT.md`") was considered and
   rejected. Keeping the grammar keep-only is what makes the union-merge
@@ -494,26 +551,19 @@ symlink is atomic on principle, not for brevity.
 
 ## Open Questions
 
-- **`trash` and symlinks.** `delete`'s commit loop now routes symlinks
-  through `Path.unlink()` (see "`is_real_dir` is the only authority on traversal");
-  `trash`'s path is `send2trash(entry)`, unchanged, since `send2trash`
-  receives the entry's own (unresolved) path either way. Each platform
-  backend (`mac`, `win`, freedesktop-via-`gio`/`plat_other`) hasn't been
-  exercised against a live symlink-to-directory to confirm it moves the
-  link node rather than erroring or dereferencing it. Existing `trash`
-  tests only assert the call shape against a stubbed `send2trash`, not
-  real OS behavior, and that stays true after this fix.
+- **`trash` and symlinks.** `delete`'s commit loop routes symlinks
+  through `Path.unlink()` (see "`is_real_dir` is the only authority on
+  traversal"). `trash`'s path is `send2trash(entry)`, since `send2trash`
+  receives the entry's own unresolved path either way. Each platform
+  backend (`mac`, `win`, freedesktop-via-`gio`/`plat_other`) has not
+  been exercised against a live symlink-to-directory to confirm it moves
+  the link node rather than erroring or dereferencing it. The `trash`
+  tests assert the call shape against a stubbed `send2trash`, never real
+  OS behaviour.
 - **Case sensitivity.** `fnmatch` inherits OS-level case sensitivity.
   Fine on Linux, could surprise someone on macOS's default
   case-insensitive filesystem. Might want an explicit `--case-sensitive`
   flag rather than relying on the OS default silently.
-- **Confirmation prompt on `--commit`.** Requiring `--commit` already
-  supplies most of what this question originally asked for: the
-  destructive form can't be reached without typing an extra flag, so
-  there is a deliberate second step. What's still absent is an
-  *interactive* confirmation once `--commit` is given. Probably not
-  worth adding now that the grammar itself forces the pause, but worth
-  revisiting if a real accident ever happens.
 - **Logging removed paths to a file.** Right now dry-run output prints
   to stdout only. A `--log-file` option to record exactly what was
   removed during a `delete --commit` run would help with the "no undo"
@@ -535,7 +585,7 @@ never dereferences" for the exact-path symlink keep.
 
 Both the use of AI and its disclosure are deliberate. Code and
 documentation in this project are written in collaboration with
-Artificial Intelligence (AI). The division of labor: the AI explores,
+Artificial Intelligence (AI). The division of labour: the AI explores,
 challenges assumptions and edge cases, and drafts; the human
 initiates, drafts the designs, explores alongside the AI, reviews
 every change, and decides what gets committed.

@@ -5,8 +5,8 @@ for the intent behind collapsing doomed directories and why there is
 no empty-directory cleanup pass.
 """
 
-from weed_out.delete import delete_rest
-from weed_out.keep import build_exact_keep
+from weed_out.delete import collect_targets, delete_rest
+from weed_out.keep import build_exact_keep, resolve_walk_sets
 
 # ---------- dry run ----------
 
@@ -269,6 +269,73 @@ def test_delete_preserves_everything_under_a_glob_matched_directory(tmp_path):
     )
     assert (config_dir / "artifact.bin").exists()
     assert (sub / "nested.bin").exists()
+
+
+# ---------- keeping root removes nothing ----------
+#
+# See DESIGN.md, "An absent keep list keeps everything". `main()` swaps an
+# empty keep list for ["."], which resolves to root. These run the real
+# "delete" mode rather than a dry run, because the claim being tested is
+# that the removal loop has nothing to iterate over.
+
+
+def _walk_inputs(root, keep_list):
+    """Resolve a keep list the way `main()` does, for the walk to consume."""
+    exact_keep, kept_roots = build_exact_keep(root, keep_list)
+    protected_dirs, kept_roots = resolve_walk_sets(root, kept_roots, [], False, False)
+    return exact_keep, protected_dirs, kept_roots
+
+
+def test_keeping_root_collects_no_targets(sample_tree):
+    """Nothing reaches the removal loop, which is what makes an extra
+    guard in main() unnecessary."""
+    exact_keep, protected_dirs, kept_roots = _walk_inputs(sample_tree, ["."])
+    targets = collect_targets(
+        sample_tree,
+        sample_tree,
+        exact_keep,
+        [],
+        False,
+        False,
+        protected_dirs,
+        kept_roots,
+    )
+    assert targets == []
+
+
+def test_keeping_root_leaves_the_whole_tree_intact(sample_tree):
+    before = sorted(p.relative_to(sample_tree) for p in sample_tree.rglob("*"))
+    exact_keep, _, kept_roots = _walk_inputs(sample_tree, ["."])
+    delete_rest(
+        sample_tree, exact_keep, [], False, False, mode="delete", kept_roots=kept_roots
+    )
+    after = sorted(p.relative_to(sample_tree) for p in sample_tree.rglob("*"))
+    assert after == before
+
+
+def test_keeping_root_spares_dot_entries_without_the_dot_flags(sample_tree):
+    """--dot-files/--dot-dirs are off here, so the dotfile survives on the
+    kept-root route alone."""
+    (sample_tree / ".cache").mkdir()
+    (sample_tree / ".cache" / "blob").write_text("x\n")
+    exact_keep, _, kept_roots = _walk_inputs(sample_tree, ["."])
+    delete_rest(
+        sample_tree, exact_keep, [], False, False, mode="delete", kept_roots=kept_roots
+    )
+    assert (sample_tree / ".env").exists()
+    assert (sample_tree / ".cache" / "blob").exists()
+
+
+def test_keeping_root_spares_symlinks_and_their_targets(linked_tree):
+    exact_keep, _, kept_roots = _walk_inputs(linked_tree, ["."])
+    delete_rest(
+        linked_tree, exact_keep, [], False, False, mode="delete", kept_roots=kept_roots
+    )
+    assert (linked_tree / "to_dir").is_symlink()
+    assert (linked_tree / "to_file").is_symlink()
+    assert (linked_tree / "inside").is_symlink()
+    assert (linked_tree.parent / "outside" / "real" / "far.md").exists()
+    assert (linked_tree / "archive" / "2024" / "stuff.md").exists()
 
 
 # ---------- "trash" mode ----------

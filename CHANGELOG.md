@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-19
+
+### Added
+
+- Per-command documentation: a command word alone (`weed-out delete`)
+  prints that command's own doc and exits 0.
+
+### Changed
+
+- **Breaking:** `PATH` must come before the flags. A `PATH` placed
+  after them is no longer accepted, whatever the interpreter tolerates.
+- **Breaking:** a missing `PATH` is now weed-out's own error (exit 1,
+  with the command's usage line), no longer argparse's (exit 2).
+- **Breaking:** a run with no keep entries (no `--keep`, no
+  `.weed-out-ignore`) now keeps everything (like `--keep "."`)
+  instead of exiting 1, allowing `tree` and dry runs to display
+  results. Both notify stderr. `--commit` still exits 1, as an
+  empty keep list is more likely a forgotten argument.
+- Bare `weed-out` prints the banner and exits 0 whatever stdin is; the
+  piped-stdin error is gone. The banner now lists the exit codes.
+- Duplicate entries are removed from the merged `--keep` and
+  `.weed-out-ignore` list, in the order they were given, so a repeated
+  pattern warns once and the warnings read the same on every run.
+- `pyproject.toml` is the only place dependencies are declared. Dev
+  tooling moved to `[dependency-groups]`, which never ships in the
+  wheel. Install with `pip install -e . --group dev` (needs pip 25.1
+  or newer).
+
+### Fixed
+
+- Flags must be spelled in full. `argparse` matched any unambiguous
+  prefix, so `--com` silently meant `--commit` and removed files. An
+  abbreviation now exits 2.
+
+### Removed
+
+- `requirements.txt` and `requirements-dev.txt`.
+
 ## [0.2.0] - 2026-07-30
 
 ### Added
@@ -80,7 +118,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Internal: `cli.py` split into `args.py`, `keep.py`, `tree.py`, and
   `delete.py` by responsibility; `cli.py` now only hosts `main()`. Both
   walks resolve their keep sets through one wrapper, and the
-  exact-vs-glob split is defined once in `is_glob`. No behavior change
+  exact-vs-glob split is defined once in `is_glob`. No behaviour change
 
 ### Fixed
 
@@ -142,7 +180,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Pinned `ruff` and `black` in `requirements-dev.txt` (previously installed unpinned in CI), so lint tooling no longer breaks silently when upstream ships new defaults
 - Pinned `black==25.11.0` specifically to keep Python 3.9 support in the CI matrix (26.5.1 requires 3.10+)
-- Adopted ruff 0.16.0's expanded lint rules and fixed the resulting 10 findings (dropped an unused shebang, collapsed two bool-return blocks, made a subprocess call's `check` behavior explicit, cleaned up unused tuple-unpacking vars in tests)
+- Adopted ruff 0.16.0's expanded lint rules and fixed the resulting 10 findings (dropped an unused shebang, collapsed two bool-return blocks, made a subprocess call's `check` behaviour explicit, cleaned up unused tuple-unpacking vars in tests)
 
 ## [0.1.0] - 2026-07-26
 
@@ -161,7 +199,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `requirements-dev.txt`
 - pytest suite covering keep-list/protected-directory resolution
   (`test_keep_resolution.py`), the delete/empty-dir passes
-  (`test_delete_walk.py`), and CLI end-to-end behavior via a subprocess
+  (`test_delete_walk.py`), and CLI end-to-end behaviour via a subprocess
   `run_cli` fixture (`test_cli_integration.py`)
 - GitHub Actions CI (`.github/workflows/ci.yaml`) running pytest, `ruff
   check`, and `black --check` on a Python 3.9-3.14 matrix
