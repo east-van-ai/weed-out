@@ -81,6 +81,9 @@ more than one Python CLI tool.
 Bare `weed-out` prints this usage summary. It doesn't read piped
 input, its unit of work is a directory, not a stream.
 
+`weed-out --version` prints the version of the installed copy. No
+command word needed, and no command takes it.
+
 The grammar is always `weed-out COMMAND PATH [flags]`.
 
 `PATH` is required (use `.` for the current directory), and flags
@@ -234,8 +237,8 @@ pyproject.toml
 
 ### Exit codes
 
-- `0`: success, and documentation (a bare `weed-out`, or a command word
-    on its own)
+- `0`: success, and documentation (a bare `weed-out`, a command word
+    on its own, or `--version`)
 - `1`: any error `weed-out` raises itself (a missing `PATH`, a stray
     token after it, `PATH` not a directory, or `--commit` with neither
     `--keep` nor `.weed-out-ignore` supplying any keep entries)

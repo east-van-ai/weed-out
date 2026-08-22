@@ -17,6 +17,7 @@
 #    weed-out delete PATH [--keep LIST] [--dry-run | --commit] [options]
 #    weed-out trash  PATH [--keep LIST] [--dry-run | --commit] [options]
 #    weed-out tree   PATH [--keep LIST] [options]
+#    weed-out --version
 #
 # Commands:
 #
@@ -36,6 +37,9 @@
 #    weed-out delete
 #    weed-out trash
 #    weed-out tree
+#
+# weed-out --version prints the installed version. Documentation too,
+# so it exits 0. It needs no command word, and no command accepts it.
 #
 # PATH comes first, then flags, whose order among themselves is free.
 # Spell flags in full: an abbreviation like `--com` is rejected, so it

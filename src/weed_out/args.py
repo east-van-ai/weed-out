@@ -1,6 +1,7 @@
 """Argument parsing for weed-out's CLI grammar."""
 
 import argparse
+from importlib import metadata
 
 # Argparse hardcodes 2 in `ArgumentParser.error()`, which calls `sys.exit`
 # itself, so EXIT_ARGPARSE is never returned, only asserted against. See
@@ -8,6 +9,22 @@ import argparse
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_ARGPARSE = 2
+
+
+def installed_version():
+    """Return the version of the installed weed-out distribution.
+
+    The literal lives in `pyproject.toml` and reaches the CLI through
+    the installed metadata, never through a second copy in the source.
+    A source tree run with no install has no metadata to read, and
+    every command builds the parser, so the miss is answered rather
+    than raised (see DESIGN.md, "`--version` reads the installed
+    metadata").
+    """
+    try:
+        return metadata.version("weed-out")
+    except metadata.PackageNotFoundError:
+        return "unknown (not installed)"
 
 
 def add_common_options(parser):
@@ -67,6 +84,17 @@ def build_parser():
         description="Delete everything except specified paths/patterns.",
         allow_abbrev=False,
     )
+    # Top-level only, and deliberately not on the subparsers: asking a
+    # command for the version is an unknown flag, exit 2. The action
+    # fires during parsing, ahead of the required-command check, which
+    # is what lets `weed-out --version` answer without a command word.
+    p.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {installed_version()}",
+        help="Print the installed version and exit.",
+    )
+
     subparsers = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     delete_help = "Permanently remove everything not kept. No undo."

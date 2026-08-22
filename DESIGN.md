@@ -190,9 +190,49 @@ command line answered two ways depending on where it was launched.
 What was typed decides the answer. weed-out reads no piped input, and
 the banner says so.
 
+### `--version` reads the installed metadata
+
+`weed-out --version` prints the program name and the number on one line
+and exits 0. It is documentation, like the banner and the per-command
+docs, so it shares their exit code.
+
+The number comes from `importlib.metadata.version("weed-out")`, the
+metadata of the installed distribution. The literal stays in
+`pyproject.toml` and is copied nowhere. A second copy in the source
+would be one more thing to keep in step by hand, and a release would
+eventually forget it.
+
+The cost of that falls on whoever is developing the tool. An editable
+install records the version once, at install time, and never re-reads
+`pyproject.toml`. A checkout whose version has moved on since
+`pip install -e .` therefore reports the number it was installed with
+while running today's code. Reinstalling refreshes it. Someone who
+installed the tool to use it has one copy and no gap.
+
+The flag sits on the top-level parser, never on the subparsers.
+Argparse's `action="version"` fires during parsing, ahead of the check
+for a required command word, which is what lets it answer without one.
+It calls `sys.exit(0)` itself, so 0 arrives as a `SystemExit` unwinding
+past `main()` rather than as a return value, the same way exit 2 does.
+
+`weed-out delete --version` is consequently not a version query. No
+subparser defines the flag, so it is an unknown flag and argparse owns
+it, exit 2. One place asks the tool what it is, and the tool answers,
+not a command.
+
+With no distribution metadata to be found, the version reads
+`unknown (not installed)`. That is a fresh clone run straight from
+source, `PYTHONPATH=src python -m weed_out.cli`, with nothing installed
+and nothing built. A tree that has been built keeps
+`src/weed_out.egg-info` beside the package, and metadata discovery
+reads that instead, number and all. The parser is built on every
+invocation that is not a bare word, so an unguarded lookup would fail
+every command there, not only this one.
+
 ### Exit codes
 
-- `0`: success, and documentation (the banner, or a command's own doc).
+- `0`: success, and documentation (the banner, a command's own doc, or
+  `--version`).
 - `1`: every error `weed-out` raises itself (a missing `PATH`, a stray
   token after it, `PATH` not a directory, or neither `--keep` nor
   `.weed-out-ignore` yielded any keep entries *and* `--commit` was

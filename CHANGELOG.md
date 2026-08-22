@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-22
+
+### Added
+
+- `weed-out --version` prints the installed version and exits 0. The
+  number comes from the installed distribution's metadata.
+
 ## [0.3.0] - 2026-08-19
 
 ### Added

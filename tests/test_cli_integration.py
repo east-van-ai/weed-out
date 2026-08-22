@@ -37,6 +37,28 @@ def test_cli_bare_command_word_prints_its_own_doc(run_cli):
         assert result.stderr == ""
 
 
+def test_cli_version_flag_prints_the_name_and_a_number(run_cli):
+    """--version is documentation too: one line, exit 0, no command word.
+
+    The number itself is not asserted. Which install answers decides
+    it, and an editable one reports whatever it was installed with.
+    """
+    result = run_cli(["--version"], input_text="")
+    assert result.returncode == EXIT_OK
+    line = result.stdout.strip()
+    assert "\n" not in line
+    name, _, number = line.partition(" ")
+    assert name == "weed-out"
+    assert number
+    assert result.stderr == ""
+
+
+def test_cli_version_flag_on_a_command_is_argparse_error(run_cli, sample_tree):
+    """No subparser defines --version, so a command makes it argparse's word."""
+    result = run_cli(["delete", str(sample_tree), "--version"], input_text="")
+    assert result.returncode == EXIT_ARGPARSE
+
+
 def test_cli_flag_order_after_command_is_free(run_cli, sample_tree):
     """Flags are order-free among themselves, but only after COMMAND and PATH."""
     result = run_cli(
