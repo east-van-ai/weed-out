@@ -1,16 +1,18 @@
 """
 Unit tests for weed_out.args.
 
-These cover the version helper and the --version action it feeds, both
+These cover the version helpers and the --version action they feed, all
 of which sit above the CLI walk and answer before any command runs. The
-rest of args.py is exercised through the CLI, in test_cli_integration.py.
+`version` command word is a CLI-level concern and lives in
+test_cli_integration.py, alongside the check that the two spellings
+agree. The rest of args.py is exercised through the CLI, there too.
 """
 
 from importlib import metadata
 
 import pytest
 
-from weed_out.args import build_parser, installed_version
+from weed_out.args import PROG, build_parser, installed_version, version_line
 
 
 def test_installed_version_reads_the_distribution_metadata():
@@ -32,6 +34,16 @@ def test_installed_version_answers_when_nothing_is_installed(monkeypatch):
     assert installed_version() == "unknown (not installed)"
 
 
+def test_version_line_joins_the_program_name_and_the_number():
+    """One builder, so the flag and the command word cannot drift apart."""
+    assert version_line() == f"{PROG} {installed_version()}"
+
+
+def test_parser_prog_is_the_shared_constant():
+    """The parser and the helper take the same name, so %(prog)s cannot differ."""
+    assert build_parser().prog == PROG
+
+
 def test_version_action_exits_zero_through_systemexit(capsys):
     """--version calls sys.exit(0) itself, so 0 never returns through main().
 
@@ -41,7 +53,7 @@ def test_version_action_exits_zero_through_systemexit(capsys):
     with pytest.raises(SystemExit) as exit_info:
         build_parser().parse_args(["--version"])
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out.strip() == f"weed-out {installed_version()}"
+    assert capsys.readouterr().out.strip() == version_line()
 
 
 def test_version_action_prints_whatever_the_helper_answered(monkeypatch, capsys):

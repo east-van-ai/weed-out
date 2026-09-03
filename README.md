@@ -81,9 +81,6 @@ more than one Python CLI tool.
 Bare `weed-out` prints this usage summary. It doesn't read piped
 input, its unit of work is a directory, not a stream.
 
-`weed-out --version` prints the version of the installed copy. No
-command word needed, and no command takes it.
-
 The grammar is always `weed-out COMMAND PATH [flags]`.
 
 `PATH` is required (use `.` for the current directory), and flags
@@ -112,7 +109,7 @@ weed-out delete . --keep "src/**/*.py,tests/*.py,README.md" --commit
 | Command | Description |
 | --- | --- |
 | `delete PATH` | Permanently remove everything not kept. No undo. |
-| `trash PATH` | Send everything not kept to the OS trash -- recoverable. |
+| `trash PATH` | Send everything not kept to the OS trash. Recoverable. |
 | `tree PATH` | Print a tree of the whole directory, tagging what would be removed. Read-only; takes no `--dry-run`/`--commit`. |
 
 | Flag | Description |
@@ -235,33 +232,19 @@ pyproject.toml
   subdirectory, such as `data/.weed-out-ignore`, isn't part of the
   keep rules.
 
-### Exit codes
-
-- `0`: success, and documentation (a bare `weed-out`, a command word
-    on its own, or `--version`)
-- `1`: any error `weed-out` raises itself (a missing `PATH`, a stray
-    token after it, `PATH` not a directory, or `--commit` with neither
-    `--keep` nor `.weed-out-ignore` supplying any keep entries)
-- `2`: argparse's own errors (unknown flag, unknown command, a bad
-    value, or `--dry-run` and `--commit` together)
-
-The split follows who is complaining. Anything about the shape of the
-command line as `weed-out` defines it is its own error and exits 1;
-anything about vocabulary argparse owns exits 2.
-
 ## Notes
 
 - Run `tree` first, always, on anything you'd be upset to lose. Take a
   moment to actually read it before moving on.
 - `--commit` is the only thing that touches anything. Every other
-  invocation is safe to run and just reports back -- including a bare
+  invocation is safe to run and just reports back, including a bare
   `weed-out delete PATH`, which previews rather than deletes.
-- There's no undo for `delete --commit` -- it works directly against
+- There's no undo for `delete --commit`. It works directly against
   your files and folders, so back things up or commit to git before
   running for real. `trash` is recoverable through your OS trash, but
   don't treat that as a substitute for backups either.
-- A symlink -- whether it points at a file or a directory -- is never
-  followed while walking the tree. It's treated as an atomic leaf, kept
+- A symlink is never followed while walking the tree, whether it
+  points at a file or a directory. It's treated as an atomic leaf, kept
   or removed as the link itself, never its target, and `tree` shows
   what it points at (`name -> target`) so you can see when a
   seemingly-ordinary file or folder is actually a link to somewhere
@@ -278,9 +261,6 @@ anything about vocabulary argparse owns exits 2.
   `weed-out` only ever talks about what survives, never what to
   remove, which is also why a `weed-out` command discloses nothing
   about the files it removes (see [Why](#why)).
-
-See [DESIGN.md](DESIGN.md) for the reasoning behind these decisions
-and open questions for where this could go next.
 
 ## Use of AI
 

@@ -59,6 +59,56 @@ def test_cli_version_flag_on_a_command_is_argparse_error(run_cli, sample_tree):
     assert result.returncode == EXIT_ARGPARSE
 
 
+def test_cli_version_command_prints_the_name_and_a_number(run_cli):
+    """The command word answers like the flag: one line, exit 0."""
+    result = run_cli(["version"], input_text="")
+    assert result.returncode == EXIT_OK
+    line = result.stdout.strip()
+    assert "\n" not in line
+    name, _, number = line.partition(" ")
+    assert name == "weed-out"
+    assert number
+    assert result.stderr == ""
+
+
+def test_cli_version_command_and_flag_agree(run_cli):
+    """One builder feeds both spellings, so their output is identical.
+
+    This is the test that shape exists for. Two literals in two places
+    would pass individually and still disagree.
+    """
+    word = run_cli(["version"], input_text="")
+    flag = run_cli(["--version"], input_text="")
+    assert word.stdout == flag.stdout
+    assert word.returncode == flag.returncode == EXIT_OK
+
+
+def test_cli_version_command_is_not_answered_with_a_docstring(run_cli):
+    """`version` stays out of COMMANDS, or the bare-word guard swallows it.
+
+    `weed-out version` is a single token, so a `version` entry in that
+    table would print a command docstring instead of the number, and
+    exit 0 either way. The line count is what separates the two.
+    """
+    result = run_cli(["version"], input_text="")
+    assert len(result.stdout.strip().splitlines()) == 1
+
+
+def test_cli_stray_token_after_version_is_a_usage_error(run_cli):
+    """The version subparser takes no positional, so the slot rule owns strays."""
+    result = run_cli(["version", "extra"], input_text="")
+    assert result.returncode == EXIT_ERROR
+    assert "version takes nothing after it: 'extra'" in result.stderr
+    assert "Usage: weed-out version" in result.stderr
+    assert result.stdout == ""
+
+
+def test_cli_flag_after_version_is_argparse_error(run_cli):
+    """`version` defines no flags, so an unknown one is argparse's word."""
+    result = run_cli(["version", "--commit"], input_text="")
+    assert result.returncode == EXIT_ARGPARSE
+
+
 def test_cli_flag_order_after_command_is_free(run_cli, sample_tree):
     """Flags are order-free among themselves, but only after COMMAND and PATH."""
     result = run_cli(

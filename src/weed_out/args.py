@@ -10,6 +10,12 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_ARGPARSE = 2
 
+# The program name, not the distribution name. `version_line()` prints
+# this one and `installed_version()` looks the other one up; they happen
+# to match here, and the parser takes this constant so `%(prog)s` and
+# the helper cannot disagree.
+PROG = "weed-out"
+
 
 def installed_version():
     """Return the version of the installed weed-out distribution.
@@ -18,13 +24,21 @@ def installed_version():
     the installed metadata, never through a second copy in the source.
     A source tree run with no install has no metadata to read, and
     every command builds the parser, so the miss is answered rather
-    than raised (see DESIGN.md, "`--version` reads the installed
-    metadata").
+    than raised.
     """
     try:
         return metadata.version("weed-out")
     except metadata.PackageNotFoundError:
         return "unknown (not installed)"
+
+
+def version_line():
+    """Return the program name and the installed version on one line.
+
+    Both spellings print this. `weed-out version` calls it directly and
+    `--version` is built from it, so the two cannot drift apart.
+    """
+    return f"{PROG} {installed_version()}"
 
 
 def add_common_options(parser):
@@ -80,7 +94,7 @@ def build_parser():
     # below repeats the keyword. Every flag weed-out defines lives on a
     # subparser, so setting it here alone would change nothing.
     p = argparse.ArgumentParser(
-        prog="weed-out",
+        prog=PROG,
         description="Delete everything except specified paths/patterns.",
         allow_abbrev=False,
     )
@@ -91,7 +105,7 @@ def build_parser():
     p.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {installed_version()}",
+        version=version_line(),
         help="Print the installed version and exit.",
     )
 
@@ -118,5 +132,13 @@ def build_parser():
         "tree", help=tree_help, description=tree_help, allow_abbrev=False
     )
     add_common_options(tree_p)
+
+    # No PATH, no flags, and deliberately absent from cli.py's COMMANDS
+    # table: a command word there is answered with its docstring, and
+    # `weed-out version` is a single token. main() answers it instead.
+    version_help = "Print the installed version and exit."
+    subparsers.add_parser(
+        "version", help=version_help, description=version_help, allow_abbrev=False
+    )
 
     return p

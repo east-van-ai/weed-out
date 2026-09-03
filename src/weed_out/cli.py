@@ -17,7 +17,6 @@
 #    weed-out delete PATH [--keep LIST] [--dry-run | --commit] [options]
 #    weed-out trash  PATH [--keep LIST] [--dry-run | --commit] [options]
 #    weed-out tree   PATH [--keep LIST] [options]
-#    weed-out --version
 #
 # Commands:
 #
@@ -37,9 +36,6 @@
 #    weed-out delete
 #    weed-out trash
 #    weed-out tree
-#
-# weed-out --version prints the installed version. Documentation too,
-# so it exits 0. It needs no command word, and no command accepts it.
 #
 # PATH comes first, then flags, whose order among themselves is free.
 # Spell flags in full: an abbreviation like `--com` is rejected, so it
@@ -63,7 +59,13 @@ import sys
 from pathlib import Path
 
 from weed_out import cli_delete, cli_trash, cli_tree
-from weed_out.args import EXIT_ARGPARSE, EXIT_ERROR, EXIT_OK, build_parser
+from weed_out.args import (
+    EXIT_ARGPARSE,
+    EXIT_ERROR,
+    EXIT_OK,
+    build_parser,
+    version_line,
+)
 
 __all__ = ["EXIT_ARGPARSE", "EXIT_ERROR", "EXIT_OK", "main"]
 
@@ -75,6 +77,12 @@ COMMANDS = {
     "trash": cli_trash,
     "tree": cli_tree,
 }
+
+# `version` is missing from that table on purpose, and the gap is not an
+# oversight to fill: the bare-word guard in main() answers any command
+# word it holds with a docstring, and `weed-out version` is one word.
+# It has no surface module either, for the same reason.
+VERSION_USAGE = "weed-out version"
 
 
 def leading_paths(tokens):
@@ -94,8 +102,11 @@ def leading_paths(tokens):
     return paths
 
 
-def usage_error(module, message):
-    """Report a command line weed-out could not read, with that command's usage.
+def usage_error(usage, message):
+    """Report a command line weed-out could not read, with the matching usage.
+
+    Takes the usage line rather than the command's module, because
+    `version` has no surface module to read one off.
 
     Grammar errors only. A readiness failure (PATH not a directory)
     prints no usage line: the command line was read fine, and usage
@@ -103,7 +114,7 @@ def usage_error(module, message):
     "PATH validation").
     """
     print(f"weed-out: {message}", file=sys.stderr)
-    print(f"Usage: {module.USAGE}", file=sys.stderr)
+    print(f"Usage: {usage}", file=sys.stderr)
     return EXIT_ERROR
 
 
@@ -131,16 +142,27 @@ def main():
     if any(extra.startswith("-") for extra in extras):
         parser.parse_args(tokens)  # argparse names the flag better, exit 2
 
+    if args.command == "version":
+        # The subparser defines no positional, so parse_known_args takes
+        # a stray bare word without complaint. The slot rule catches it.
+        strays = leading_paths(tokens[1:])
+        if strays:
+            return usage_error(
+                VERSION_USAGE, f"version takes nothing after it: {strays[0]!r}"
+            )
+        print(version_line())
+        return EXIT_OK
+
     module = COMMANDS[args.command]
 
     # Not args.path: what argparse resolves from a token after a flag
     # varies by interpreter, and the grammar should not.
     paths = leading_paths(tokens[1:])
     if not paths:
-        return usage_error(module, f"{args.command} needs PATH")
+        return usage_error(module.USAGE, f"{args.command} needs PATH")
     if len(paths) > 1:
         return usage_error(
-            module, f"{args.command} takes nothing after PATH: {paths[1]!r}"
+            module.USAGE, f"{args.command} takes nothing after PATH: {paths[1]!r}"
         )
 
     root = Path(paths[0]).resolve()
