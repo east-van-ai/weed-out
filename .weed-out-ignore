@@ -7,7 +7,8 @@
 src/**/*.py
 tests/*.py
 CHANGELOG.md
-DESIGN.md
+docs/CLI.md
+docs/DESIGN.md
 LICENSE
 pyproject.toml
 README.md

@@ -65,7 +65,7 @@ single doomed file.
 `weed-out` requires Python 3.9 or newer. It depends on the standard
 library plus one small runtime dependency, [`send2trash`](https://pypi.org/project/Send2Trash/)
 (BSD-3-Clause), used by `trash` to move items to the OS trash instead
-of deleting them outright. `pipx`/`pip` install it automatically, with
+of deleting them. `pipx`/`pip` install it automatically, with
 no separate step. Tested in CI on Python 3.9 through 3.14.
 
 ```bash
@@ -78,8 +78,8 @@ more than one Python CLI tool.
 
 ## Usage
 
-Bare `weed-out` prints this usage summary. It doesn't read piped
-input, its unit of work is a directory, not a stream.
+Bare `weed-out` prints a usage summary. It doesn't read piped input:
+its unit of work is a directory, not a stream.
 
 The grammar is always `weed-out COMMAND PATH [flags]`.
 
@@ -126,9 +126,9 @@ With no keep list at all (no `--keep`, no `.weed-out-ignore`), a run
 keeps everything, exactly as if you had passed `--keep "."`. Nothing is
 tagged and nothing would be removed, so `weed-out tree PATH` is a safe
 way to look at a directory before deciding what to protect. `--commit`
-is the exception: it refuses to run without a keep list and exits 1,
-because there an empty list is far likelier to be a forgotten argument
-than a deliberate choice.
+is the exception: it refuses to run without a keep list, because there
+an empty list is far likelier to be a forgotten argument than a
+deliberate choice.
 
 Entries can be:
 
@@ -151,7 +151,7 @@ files directly under `src/weed_out/` without also protecting every
 A plain `*` in a path-scoped pattern stops at the next `/`, so
 `src/weed_out/*.py` only protects files directly inside
 `src/weed_out/`, not anything nested deeper. Use `**` to reach deeper
-too, it matches zero or more whole path segments:
+too. It matches zero or more whole path segments:
 
 ```text
 src/weed_out/*.py       matches: src/weed_out/cli.py
@@ -188,9 +188,9 @@ advice.
 A directory is never deleted if anything inside it, at any depth, is
 being kept. So keeping `src/notes/design.md` via a pattern
 automatically protects `src/notes/` and `src/`, even though neither
-directory name matches anything in `--keep` itself. See "Survival
-propagates both ways" in [DESIGN.md](DESIGN.md) for why this needs
-its own pass.
+directory name matches anything in `--keep` itself. Protection travels
+upward from whatever survives, so you never have to name the folders on
+the way down.
 
 Those parent directories survive as *shells*, though: naming a file
 keeps that file, not its neighbours. `--keep "src/main.py"` leaves
@@ -227,7 +227,7 @@ pyproject.toml
   source overrides the other.
 - Read-only from the file's point of view too: like everything else in
   `weed-out` except `--commit`, having the file present never deletes
-  anything on its own, it only ever adds to what survives.
+  anything on its own. It only ever adds to what survives.
 - Only the file at `PATH` counts. A `.weed-out-ignore` in a
   subdirectory, such as `data/.weed-out-ignore`, isn't part of the
   keep rules.
@@ -255,19 +255,17 @@ pyproject.toml
   `notes` is a link keeps only the link, exactly as `--keep "notes"`
   would.
 - Whether names are matched case-sensitively depends on your operating
-  system, macOS is case-insensitive by default, Linux usually isn't.
+  system: macOS is case-insensitive by default, Linux usually isn't.
 - There's no way to say "delete this one thing" inside a pattern (no
-  `!pattern` negation like `.gitignore` has). That's on purpose,
+  `!pattern` negation like `.gitignore` has). That's on purpose:
   `weed-out` only ever talks about what survives, never what to
   remove, which is also why a `weed-out` command discloses nothing
   about the files it removes (see [Why](#why)).
 
 ## Use of AI
 
-This project is built with Artificial Intelligence (AI), deliberately
-and in the open. Code and documentation are written in collaboration
-with remote and local AI; design decisions, code review, and final
-judgement stay human.
+Code and documentation are written in collaboration with remote and local AI; design
+decisions, code review, semantic and auditory review, and final judgement stay human.
 
 ---
 

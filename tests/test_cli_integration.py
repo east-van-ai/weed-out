@@ -84,11 +84,13 @@ def test_cli_version_command_and_flag_agree(run_cli):
 
 
 def test_cli_version_command_is_not_answered_with_a_docstring(run_cli):
-    """`version` stays out of COMMANDS, or the bare-word guard swallows it.
+    """`version` sits in COMMANDS with its own `bare`, not a module's docstring.
 
-    `weed-out version` is a single token, so a `version` entry in that
-    table would print a command docstring instead of the number, and
-    exit 0 either way. The line count is what separates the two.
+    `weed-out version` is a single token, so the bare-word guard answers it
+    from the table directly. `version`'s entry calls `version_line` for
+    `bare`, unlike the other three entries which read a module's docstring,
+    so the guard cannot mistake one answer for the other. The line count is
+    what would catch it if it ever did.
     """
     result = run_cli(["version"], input_text="")
     assert len(result.stdout.strip().splitlines()) == 1
@@ -174,7 +176,7 @@ def test_cli_unknown_flag_is_argparse_error(run_cli, sample_tree):
 
 
 def test_cli_abbreviated_commit_flag_is_rejected(run_cli, sample_tree):
-    """`--com` must not reach --commit. See DESIGN.md, "Flags are spelled in full".
+    """`--com` must not reach --commit.
 
     The exit code alone would not catch a regression that rejects the
     flag only after the walk, so this asserts the tree is still intact.
@@ -197,7 +199,7 @@ def test_cli_abbreviated_read_only_flag_is_rejected(run_cli, sample_tree):
 
 def test_cli_nonexistent_path_is_error(run_cli, tmp_path):
     """A PATH that isn't a directory is a readiness failure, not a grammar
-    error, so no usage line accompanies it (see DESIGN.md, "PATH validation")."""
+    error, so no usage line accompanies it."""
     result = run_cli(
         ["delete", str(tmp_path / "nope"), "--keep", "keep.md"], input_text=""
     )
@@ -209,9 +211,8 @@ def test_cli_nonexistent_path_is_error(run_cli, tmp_path):
 
 # ---------- an absent keep list keeps everything ----------
 #
-# See DESIGN.md, "An absent keep list keeps everything". With neither
-# --keep nor .weed-out-ignore, the run resolves as `--keep "."`, so every
-# entry survives. Only --commit still refuses to run.
+# With neither --keep nor .weed-out-ignore, the run resolves as
+# `--keep "."`, so every entry survives. Only --commit still refuses to run.
 
 
 def test_cli_tree_with_no_keep_list_keeps_every_entry(run_cli, sample_tree):
@@ -250,12 +251,17 @@ def test_cli_dry_run_with_no_keep_list_omits_the_commit_trailer(run_cli, sample_
 
 
 def test_cli_commit_with_no_keep_list_is_a_usage_error(run_cli, sample_tree):
-    """--commit is the one mode that still refuses an absent keep list."""
+    """--commit is the one mode that still refuses an absent keep list.
+
+    This is a readiness failure, the same kind `PATH` not being a directory
+    is, not a grammar error: no `Usage:` line accompanies it.
+    """
     for command in ("delete", "trash"):
         result = run_cli([command, str(sample_tree), "--commit"], input_text="")
         assert result.returncode == EXIT_ERROR
         assert "no keep entries specified" in result.stderr
         assert result.stderr.startswith("weed-out: ")
+        assert "Usage:" not in result.stderr
         assert (sample_tree / "drop.txt").exists()
         assert (sample_tree / "build" / "artifact.bin").exists()
 
@@ -563,8 +569,8 @@ def test_cli_warnings_follow_the_order_the_patterns_were_given(run_cli, sample_t
 
 # ---------- symlinks are never descended into ----------
 #
-# See DESIGN.md, "Symlinks are never descended into". `outside` is built
-# as a sibling of `root`, not under it, to stand in for "outside PATH".
+# `outside` is built as a sibling of `root`, not under it, to stand in
+# for "outside PATH".
 
 
 def _tree_with_outside_link(tmp_path):

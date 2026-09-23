@@ -1,5 +1,7 @@
 """
-# ~~~ ~~~ ~~~ ~~~ ~~~ weed-out trash ~~~ ~~~ ~~~ ~~~ ~~~
+# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ weed-out trash ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
+#
+# https://github.com/east-van-ai/weed-out
 #
 # Send everything under PATH except what's kept to the OS trash.
 # Recoverable, unlike `delete`. The bare verb is a dry run; --commit is
@@ -31,14 +33,22 @@
 
 from pathlib import Path
 
+from weed_out import errors
 from weed_out.delete import run_removal
 
+HELP = "Send everything not kept to the OS trash. Recoverable."
 USAGE = (
     "weed-out trash PATH [--keep LIST] [--dry-run | --commit] "
     "[--dot-files] [--dot-dirs]"
 )
+SLOTS = ("PATH",)
 
 
-def run(root: Path, args) -> int:
+def run(path: str, args) -> None:
     """Run the removal pipeline with the OS trash as the disposal."""
-    return run_removal(root, args, "trash", USAGE)
+    root = Path(path).resolve()
+
+    if not root.is_dir():
+        raise errors.ReadinessError(f"{root} is not a directory")
+
+    run_removal(root, args, "trash")

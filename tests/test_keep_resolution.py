@@ -2,8 +2,7 @@
 Unit tests for weed_out.cli's keep-list resolution helpers.
 
 These call the functions directly (no subprocess), using the sample_tree
-fixture from conftest.py. See DESIGN.md's "The Keep/Delete Pipeline" for
-the intent behind each of these passes.
+fixture from conftest.py.
 """
 
 from weed_out.keep import (
@@ -92,9 +91,9 @@ def test_exact_keep_collapses_dot_and_dot_dot_lexically(sample_tree):
 
 # ---------- "." keeps everything ----------
 #
-# See DESIGN.md, "An absent keep list keeps everything". `main()` swaps an
-# empty keep list for ["."], so these state why that swap needs no other
-# machinery: "." names root, and root protects its whole subtree.
+# `main()` swaps an empty keep list for ["."], so these state why that
+# swap needs no other machinery: "." names root, and root protects its
+# whole subtree.
 
 
 def test_dot_resolves_to_root_itself(sample_tree):
@@ -281,9 +280,8 @@ def test_path_pattern_match_false_for_wrong_location():
 
 
 def test_glob_only_kept_file_protects_its_parent_directory(sample_tree):
-    """DESIGN.md's protected-directory bug: notes/design.md is kept only
-    via *.md, but notes/ isn't named anywhere in --keep. It must still
-    survive."""
+    """The protected-directory bug: notes/design.md is kept only via *.md,
+    but notes/ isn't named anywhere in --keep. It must still survive."""
     _exact_keep, kept_roots = build_exact_keep(sample_tree, ["*.md"])
     patterns = ["*.md"]
     protected, _directly_kept_dirs = build_protected_dirs(
@@ -307,7 +305,7 @@ def test_directory_with_no_kept_descendant_is_not_protected(sample_tree):
 
 def test_file_under_exact_kept_directory_is_under_kept_dir(sample_tree):
     """A directory named directly in --keep must protect everything
-    inside it, not just the directory shell itself (see DESIGN.md)."""
+    inside it, not just the directory shell itself."""
     _exact_keep, kept_roots = build_exact_keep(sample_tree, ["src/"])
     main_py = (sample_tree / "src" / "main.py").resolve()
     assert is_under_kept_dir(main_py, kept_roots)
@@ -332,9 +330,9 @@ def test_file_outside_kept_directory_is_not_under_kept_dir(sample_tree):
 
 
 def test_dotdir_is_collected_as_directly_kept_dir(tmp_path):
-    """DESIGN.md's shell-only bug: a directory kept only via --dot-dirs
-    must land in directly_kept_dirs so its contents can be protected too,
-    not just the directory entry itself."""
+    """The shell-only bug: a directory kept only via --dot-dirs must land
+    in directly_kept_dirs so its contents can be protected too, not just
+    the directory entry itself."""
     dotdir = tmp_path / ".config"
     dotdir.mkdir()
     (dotdir / "settings.json").write_text("{}\n")
@@ -568,9 +566,8 @@ def test_is_real_dir_false_for_a_dangling_symlink(tmp_path):
 def test_directly_kept_symlinked_dot_dir_still_lands_in_directly_kept_dirs(tmp_path):
     """A directly-kept symlinked directory still gets classified as one in
     build_protected_dirs -- this stays true even though nothing is ever
-    descended into on the far side of it (see DESIGN.md, "Symlinks are
-    never descended into"): the classification is harmless once nothing
-    walks past it, not wrong."""
+    descended into on the far side of it: the classification is harmless
+    once nothing walks past it, not wrong."""
     target = tmp_path / "outside"
     target.mkdir()
     dotdir = tmp_path / ".config"

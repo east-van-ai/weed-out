@@ -1,11 +1,11 @@
 """
 # ==============================================
 # East Van AI -- AI for the rest of us!
-# https://github.com/east-van-ai
+# https://github.com/east-van-ai/weed-out
 # contact: east-van-ai@proton.me
 # ==============================================
 #
-# ~~~ ~~~ ~~~ ~~~ ~~~ weed-out ~~~ ~~~ ~~~ ~~~ ~~~
+# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ weed-out ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
 #
 # Delete everything in a directory tree except what's explicitly listed
 # in --keep (exact paths and/or glob patterns). Most cleanup tools are
@@ -56,33 +56,54 @@
 """
 
 import sys
-from pathlib import Path
+from collections import namedtuple
 
-from weed_out import cli_delete, cli_trash, cli_tree
-from weed_out.args import (
-    EXIT_ARGPARSE,
-    EXIT_ERROR,
-    EXIT_OK,
-    build_parser,
-    version_line,
-)
+from weed_out import cli_delete, cli_trash, cli_tree, errors
+from weed_out.args import build_parser, version_line
+
+# main() returns EXIT_OK or EXIT_ERROR. On usage errors, argparse's
+# ArgumentParser.error() calls sys.exit(2) before main() can return, so
+# EXIT_ARGPARSE is never returned by main(). It's defined for test assertions.
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_ARGPARSE = 2
 
 __all__ = ["EXIT_ARGPARSE", "EXIT_ERROR", "EXIT_OK", "main"]
 
-# Each command's surface module carries its own documentation, usage
-# line, and run(). The table adds nothing else: every command reads the
-# same single PATH slot.
-COMMANDS = {
-    "delete": cli_delete,
-    "trash": cli_trash,
-    "tree": cli_tree,
-}
+Command = namedtuple("Command", "bare usage slots action")
+"""A command word's answer to being typed alone, its usage line, the path slots it
+reads, and the action a full invocation runs.
 
-# `version` is missing from that table on purpose, and the gap is not an
-# oversight to fill: the bare-word guard in main() answers any command
-# word it holds with a docstring, and `weed-out version` is one word.
-# It has no surface module either, for the same reason.
-VERSION_USAGE = "weed-out version"
+`bare` returns the text for the bare word; `action` runs the command. For `version`,
+both read from `version_line`, since running the command answers the bare word.
+"""
+
+COMMANDS = {
+    "delete": Command(
+        lambda: cli_delete.__doc__.strip(),
+        cli_delete.USAGE,
+        cli_delete.SLOTS,
+        lambda paths, args: cli_delete.run(*paths, args),
+    ),
+    "trash": Command(
+        lambda: cli_trash.__doc__.strip(),
+        cli_trash.USAGE,
+        cli_trash.SLOTS,
+        lambda paths, args: cli_trash.run(*paths, args),
+    ),
+    "tree": Command(
+        lambda: cli_tree.__doc__.strip(),
+        cli_tree.USAGE,
+        cli_tree.SLOTS,
+        lambda paths, args: cli_tree.run(*paths, args),
+    ),
+    "version": Command(
+        version_line,
+        "weed-out version",
+        (),
+        lambda paths, args: print(version_line()),
+    ),
+}
 
 
 def leading_paths(tokens):
@@ -91,8 +112,7 @@ def leading_paths(tokens):
     The documented grammar puts PATH before every flag, so the slot is
     read off the front of the command line. What argparse resolved from
     anywhere else is discarded, since how much it tolerates depends on
-    the interpreter. See DESIGN.md, "Positions are decided, not
-    inferred".
+    the interpreter.
     """
     paths = []
     for token in tokens:
@@ -103,37 +123,37 @@ def leading_paths(tokens):
 
 
 def usage_error(usage, message):
-    """Report a command line weed-out could not read, with the matching usage.
-
-    Takes the usage line rather than the command's module, because
-    `version` has no surface module to read one off.
-
-    Grammar errors only. A readiness failure (PATH not a directory)
-    prints no usage line: the command line was read fine, and usage
-    beside it would answer a question nobody asked (see DESIGN.md,
-    "PATH validation").
-    """
+    """Report a command line weed-out could not read, with that command's usage."""
+    sys.stdout.flush()
     print(f"weed-out: {message}", file=sys.stderr)
     print(f"Usage: {usage}", file=sys.stderr)
     return EXIT_ERROR
 
 
-def main():
-    """Parse arguments, enforce the CLI grammar, and dispatch to a command.
+def readiness_error(message):
+    """Report what the run needed and did not find, with no usage line."""
+    sys.stdout.flush()
+    print(f"weed-out: {message}", file=sys.stderr)
+    return EXIT_ERROR
 
-    A bare word is a question and gets documentation, exit 0. Any other
-    shortfall in the PATH slot is a slip and gets an error, exit 1.
-    Argparse keeps the vocabulary it owns: an unknown command, an
-    unknown flag, or a bad value, exiting 2.
-    """
-    tokens = sys.argv[1:]
+
+def runtime_error(message):
+    """Report a run that stopped partway, naming what was written."""
+    sys.stdout.flush()
+    print(f"weed-out: {message}", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def main(argv=None):
+    """Parse arguments, run the matching command, return an exit code."""
+    tokens = list(sys.argv[1:] if argv is None else argv)
 
     if not tokens:
         print(__doc__.strip())
         return EXIT_OK
 
     if len(tokens) == 1 and tokens[0] in COMMANDS:
-        print(COMMANDS[tokens[0]].__doc__.strip())
+        print(COMMANDS[tokens[0]].bare())
         return EXIT_OK
 
     parser = build_parser()
@@ -142,35 +162,32 @@ def main():
     if any(extra.startswith("-") for extra in extras):
         parser.parse_args(tokens)  # argparse names the flag better, exit 2
 
-    if args.command == "version":
-        # The subparser defines no positional, so parse_known_args takes
-        # a stray bare word without complaint. The slot rule catches it.
-        strays = leading_paths(tokens[1:])
-        if strays:
-            return usage_error(
-                VERSION_USAGE, f"version takes nothing after it: {strays[0]!r}"
-            )
-        print(version_line())
-        return EXIT_OK
-
-    module = COMMANDS[args.command]
-
-    # Not args.path: what argparse resolves from a token after a flag
-    # varies by interpreter, and the grammar should not.
     paths = leading_paths(tokens[1:])
-    if not paths:
-        return usage_error(module.USAGE, f"{args.command} needs PATH")
-    if len(paths) > 1:
+
+    command = COMMANDS[args.command]
+
+    if len(paths) < len(command.slots):
+        needed = " and ".join(command.slots)
+        if len(command.slots) > 1:
+            needed = f"both {needed}"
+        return usage_error(command.usage, f"{args.command} needs {needed}")
+
+    if len(paths) > len(command.slots):
+        stray = paths[len(command.slots)]
+        last = command.slots[-1] if command.slots else "it"
         return usage_error(
-            module.USAGE, f"{args.command} takes nothing after PATH: {paths[1]!r}"
+            command.usage,
+            f"{args.command} takes nothing after {last}: {stray!r}",
         )
 
-    root = Path(paths[0]).resolve()
-    if not root.is_dir():
-        print(f"weed-out: {root} is not a directory", file=sys.stderr)
-        return EXIT_ERROR
+    try:
+        command.action(paths, args)
+    except errors.ReadinessError as failure:
+        return readiness_error(str(failure))
+    except errors.RuntimeFailure as failure:
+        return runtime_error(str(failure))
 
-    return module.run(root, args)
+    return EXIT_OK
 
 
 if __name__ == "__main__":

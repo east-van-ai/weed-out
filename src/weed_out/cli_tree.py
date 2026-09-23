@@ -1,10 +1,11 @@
 """
-# ~~~ ~~~ ~~~ ~~~ ~~~ weed-out tree ~~~ ~~~ ~~~ ~~~ ~~~
+# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ weed-out tree ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
 #
-# Print a tree of PATH, tagging everything a removal would take with
-# [REMOVE]. Read-only: it never touches the filesystem, and it takes no
-# --dry-run or --commit at all. This is the tool's primary safety
-# mechanism -- run it before every --commit.
+# https://github.com/east-van-ai/weed-out
+#
+# Print a tree of PATH, tagging everything a removal would take with [REMOVE].
+# It never touches the filesystem, and it takes no --dry-run or --commit at
+# all. This is the tool's primary safety mechanism.
 #
 # Usage:
 #
@@ -26,7 +27,7 @@
 
 from pathlib import Path
 
-from weed_out.args import EXIT_OK
+from weed_out import errors
 from weed_out.keep import (
     resolve_keep_list,
     resolve_walk_sets,
@@ -35,11 +36,18 @@ from weed_out.keep import (
 )
 from weed_out.tree import format_summary, print_tree
 
+HELP = "Print a tree tagging what would be removed. Never touches the filesystem."
 USAGE = "weed-out tree PATH [--keep LIST] [--dot-files] [--dot-dirs]"
+SLOTS = ("PATH",)
 
 
-def run(root: Path, args) -> int:
+def run(path: str, args) -> None:
     """Print the keep/remove tree for PATH. Read-only."""
+    root = Path(path).resolve()
+
+    if not root.is_dir():
+        raise errors.ReadinessError(f"{root} is not a directory")
+
     exact_keep, kept_roots, patterns, keep_everything = resolve_keep_list(
         root, args.keep
     )
@@ -61,4 +69,3 @@ def run(root: Path, args) -> int:
     if keep_everything:
         warn_keep_everything()
     warn_narrowing_patterns(root, patterns)
-    return EXIT_OK

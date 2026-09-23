@@ -116,13 +116,12 @@ def resolve_keep_list(root: Path, keep_arg):
     Returns `(exact_keep, kept_roots, patterns, keep_everything)`.
     `keep_arg` is the raw --keep value, or None. When neither source
     yields an entry, the list resolves to `--keep "."` and
-    `keep_everything` says so, so the caller can announce or refuse it
-    (see DESIGN.md, "An absent keep list keeps everything").
+    `keep_everything` says so, so the caller can announce or refuse it.
     """
     keep_entries = [x.strip() for x in (keep_arg or "").split(",") if x.strip()]
     ignore_entries = read_ignore_file(root)
     # dict.fromkeys, not set(): dedupes without shuffling, so a pattern's
-    # warnings surface in the order it was given (see DESIGN.md).
+    # warnings surface in the order it was given.
     raw_list = list(dict.fromkeys(keep_entries + ignore_entries))
     keep_everything = not raw_list
     if keep_everything:
@@ -168,9 +167,9 @@ def build_exact_keep(root: Path, keep_list: list[str]) -> tuple[set[Path], set[P
     directory's contents rather than just its shell.
 
     Entries are made absolute lexically (`os.path.normpath`), never with
-    `Path.resolve()` (see DESIGN.md, "Identity resolution never
-    dereferences"). `root` is expected to arrive already resolved, as
-    `main()` resolves `PATH`.
+    `Path.resolve()`, which dereferences the entry's final component and
+    would make a kept symlink name its target instead. `root` is expected
+    to arrive already resolved, as `main()` resolves `PATH`.
     """
     keep = set()
     kept_roots = set()
@@ -209,8 +208,7 @@ def is_directly_kept(
     caller passes is the question it is really asking: `exact_keep` asks
     about *survival*, where an ancestor shell counts; `kept_roots` asks
     whether the entry was *named*, which is what deciding a directory's
-    whole subtree requires (see DESIGN.md, "Survival propagates both
-    ways").
+    whole subtree requires.
     """
     if p in exact_paths:
         return True
@@ -235,8 +233,7 @@ def build_protected_dirs(
 
     Takes `kept_roots`, the exact paths as *named*, never the
     ancestor-inflated `exact_keep`, which would file every ancestor of a
-    named file as directly kept (see DESIGN.md, "Survival propagates both
-    ways").
+    named file as directly kept.
     """
     protected = set()
     directly_kept_dirs = set()
@@ -260,7 +257,7 @@ def resolve_walk_sets(
     them: a directly-kept directory has to protect its whole subtree, not
     just its own shell. Both the `tree` walk and the delete walk resolve
     their inputs through here, so the two cannot disagree about what is
-    kept (see DESIGN.md, "Survival propagates both ways").
+    kept.
     """
     protected_dirs, directly_kept_dirs = build_protected_dirs(
         root, kept_roots, patterns, dot_files, dot_dirs
@@ -274,8 +271,7 @@ def is_real_dir(entry: Path) -> bool:
 
     The single discriminator for every "recurse into this / bulk-remove
     this whole" decision in the walks, because a symlink is an atomic
-    leaf (see DESIGN.md, "`is_real_dir` is the only authority on
-    traversal").
+    leaf.
     """
     return entry.is_dir() and not entry.is_symlink()
 
@@ -295,8 +291,7 @@ def should_keep(
     Three routes: p is directly kept, p is an ancestor of something
     directly kept (`protected_dirs`), or p is nested inside a
     directly-kept directory (`kept_roots`). Nothing else may re-answer
-    this with a membership test against one of those sets (see DESIGN.md,
-    "`should_keep` is the only authority on survival").
+    this with a membership test against one of those sets.
     """
     if is_directly_kept(p, root, exact_keep, patterns, dot_files, dot_dirs):
         return True

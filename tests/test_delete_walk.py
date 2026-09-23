@@ -1,8 +1,7 @@
 """
 Unit tests for weed_out.cli's delete pass, called directly against
-tmp_path (no subprocess). See DESIGN.md's "The Keep/Delete Pipeline"
-for the intent behind collapsing doomed directories and why there is
-no empty-directory cleanup pass.
+tmp_path (no subprocess). Covers the collapse of doomed directories and
+the absence of an empty-directory cleanup pass.
 """
 
 from weed_out.delete import collect_targets, delete_rest
@@ -35,8 +34,7 @@ def test_dry_run_singular_count_wording(tmp_path, capsys):
 
 def test_dry_run_lists_a_doomed_directory_without_its_contents(sample_tree, capsys):
     """A directory that isn't kept is reported as one line, not as itself
-    plus every file under it -- the same collapse the removal performs
-    (see DESIGN.md, "Collapsing doomed directories")."""
+    plus every file under it -- the same collapse the removal performs."""
     exact_keep, kept_roots = build_exact_keep(sample_tree, [])
     delete_rest(
         sample_tree, exact_keep, [], False, False, mode="dry-run", kept_roots=kept_roots
@@ -82,8 +80,7 @@ def _target_lines(capsys, root):
 
 def test_doomed_directory_is_one_target_not_one_per_file(tmp_path, capsys):
     """Nothing inside an unkept directory can be kept, so the walk records
-    the directory itself and never enters it (DESIGN.md, "Collapsing
-    doomed directories")."""
+    the directory itself and never enters it."""
     deep = tmp_path / "venv" / "lib" / "site-packages"
     deep.mkdir(parents=True)
     (deep / "mod.py").write_text("x\n")
@@ -228,10 +225,9 @@ def test_delete_preserves_glob_only_kept_file_and_its_parent(sample_tree):
 
 
 def test_delete_preserves_everything_under_a_dot_dir(tmp_path):
-    """Regression test for the shell-only bug (DESIGN.md): --dot-dirs
-    used to keep the dot-directory itself while deleting everything
-    inside it. A file and a subdirectory nested inside a dot-dir must
-    both survive a "delete" run."""
+    """Regression test for the shell-only bug: --dot-dirs used to keep the
+    dot-directory itself while deleting everything inside it. A file and a
+    subdirectory nested inside a dot-dir must both survive a "delete" run."""
     dotdir = tmp_path / ".config"
     sub = dotdir / "sub"
     sub.mkdir(parents=True)
@@ -273,10 +269,9 @@ def test_delete_preserves_everything_under_a_glob_matched_directory(tmp_path):
 
 # ---------- keeping root removes nothing ----------
 #
-# See DESIGN.md, "An absent keep list keeps everything". `main()` swaps an
-# empty keep list for ["."], which resolves to root. These run the real
-# "delete" mode rather than a dry run, because the claim being tested is
-# that the removal loop has nothing to iterate over.
+# `main()` swaps an empty keep list for ["."], which resolves to root.
+# These run the real "delete" mode rather than a dry run, because the
+# claim being tested is that the removal loop has nothing to iterate over.
 
 
 def _walk_inputs(root, keep_list):
@@ -369,11 +364,10 @@ def test_trash_preserves_everything_under_a_kept_directory(sample_tree):
 
 # ---------- already-empty directories ----------
 #
-# There is no empty-directory cleanup pass (DESIGN.md, "Why there is no
-# empty-directory cleanup pass"). These pin down both halves of what its
-# removal means: an already-empty directory that is kept survives, and an
-# already-empty directory that isn't is still removed -- by the main walk,
-# which records it as an ordinary target.
+# There is no empty-directory cleanup pass. These pin down both halves of
+# what its removal means: an already-empty directory that is kept survives,
+# and an already-empty directory that isn't is still removed -- by the main
+# walk, which records it as an ordinary target.
 
 
 def test_empty_directory_kept_by_dot_dirs_survives(tmp_path):
@@ -469,8 +463,8 @@ def test_unkept_empty_chain_is_still_removed_whole(tmp_path):
 
 # ---------- symlinks are never descended into ----------
 #
-# See DESIGN.md, "Symlinks are never descended into". `outside` is built
-# as a sibling of `root` (not under it) to stand in for "outside PATH".
+# `outside` is built as a sibling of `root` (not under it) to stand in
+# for "outside PATH".
 
 
 def _tree_with_outside_link(tmp_path):

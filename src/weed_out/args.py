@@ -3,18 +3,10 @@
 import argparse
 from importlib import metadata
 
-# Argparse hardcodes 2 in `ArgumentParser.error()`, which calls `sys.exit`
-# itself, so EXIT_ARGPARSE is never returned, only asserted against. See
-# DESIGN.md, "Exit codes", for what the three cover.
-EXIT_OK = 0
-EXIT_ERROR = 1
-EXIT_ARGPARSE = 2
+from weed_out import cli_delete, cli_trash, cli_tree
 
-# The program name, not the distribution name. `version_line()` prints
-# this one and `installed_version()` looks the other one up; they happen
-# to match here, and the parser takes this constant so `%(prog)s` and
-# the helper cannot disagree.
 PROG = "weed-out"
+"""The word typed on the command line, which the parser and `version_line` share."""
 
 
 def installed_version():
@@ -46,8 +38,7 @@ def add_common_options(parser):
 
     PATH is optional to argparse so that a bare command word reaches
     `main()` and gets documentation instead of a usage error. Its parsed
-    value goes unused: `main()` reads the slot itself (see DESIGN.md,
-    "Positions are decided, not inferred").
+    value goes unused: `main()` reads the slot itself.
     """
     parser.add_argument(
         "path",
@@ -98,47 +89,36 @@ def build_parser():
         description="Delete everything except specified paths/patterns.",
         allow_abbrev=False,
     )
-    # Top-level only, and deliberately not on the subparsers: asking a
-    # command for the version is an unknown flag, exit 2. The action
-    # fires during parsing, ahead of the required-command check, which
-    # is what lets `weed-out --version` answer without a command word.
-    p.add_argument(
-        "--version",
-        action="version",
-        version=version_line(),
-        help="Print the installed version and exit.",
-    )
 
     subparsers = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    delete_help = "Permanently remove everything not kept. No undo."
+    version_help = "Print the installed version and exit."
+    # Fires during parsing, ahead of the required-command check, so this
+    # answers with no command word and calls sys.exit(0) itself.
+    p.add_argument(
+        "--version", action="version", version=version_line(), help=version_help
+    )
+    # No PATH, no flags: cli.py's Command entry reads version_line
+    # directly, not a module docstring, so table membership is safe.
+    subparsers.add_parser(
+        "version", help=version_help, description=version_help, allow_abbrev=False
+    )
+
     delete_p = subparsers.add_parser(
-        "delete", help=delete_help, description=delete_help, allow_abbrev=False
+        "delete", help=cli_delete.HELP, description=cli_delete.HELP, allow_abbrev=False
     )
     add_common_options(delete_p)
     add_mode_flags(delete_p)
 
-    trash_help = "Send everything not kept to the OS trash. Recoverable."
     trash_p = subparsers.add_parser(
-        "trash", help=trash_help, description=trash_help, allow_abbrev=False
+        "trash", help=cli_trash.HELP, description=cli_trash.HELP, allow_abbrev=False
     )
     add_common_options(trash_p)
     add_mode_flags(trash_p)
 
-    tree_help = (
-        "Print a tree tagging what would be removed. Never touches the filesystem."
-    )
     tree_p = subparsers.add_parser(
-        "tree", help=tree_help, description=tree_help, allow_abbrev=False
+        "tree", help=cli_tree.HELP, description=cli_tree.HELP, allow_abbrev=False
     )
     add_common_options(tree_p)
-
-    # No PATH, no flags, and deliberately absent from cli.py's COMMANDS
-    # table: a command word there is answered with its docstring, and
-    # `weed-out version` is a single token. main() answers it instead.
-    version_help = "Print the installed version and exit."
-    subparsers.add_parser(
-        "version", help=version_help, description=version_help, allow_abbrev=False
-    )
 
     return p
