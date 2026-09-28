@@ -9,7 +9,14 @@ The `run_cli`, `sample_tree`, `named_file_tree` and `linked_tree`
 fixtures live in conftest.py.
 """
 
+from weed_out import args, cli_delete, cli_trash, cli_tree
 from weed_out.cli import EXIT_ARGPARSE, EXIT_ERROR, EXIT_OK
+
+PAGES = {
+    "delete": (cli_delete, args.add_delete),
+    "trash": (cli_trash, args.add_trash),
+    "tree": (cli_tree, args.add_tree),
+}
 
 # ---------- grammar ----------
 
@@ -22,19 +29,56 @@ def test_cli_bare_prints_banner_whatever_stdin_is(run_cli):
     """
     result = run_cli([], input_text="")
     assert result.returncode == EXIT_OK
-    assert "~~~ weed-out ~~~" in result.stdout
-    assert "Exit codes:" in result.stdout
+    assert "# East Van AI" in result.stdout
+    assert "exit codes:" in result.stdout
+    assert result.stdout.rstrip().endswith(args.build_parser().format_help().rstrip())
     assert result.stderr == ""
 
 
 def test_cli_bare_command_word_prints_its_own_doc(run_cli):
     """A command word and nothing else at all is a question too."""
-    for command in ("delete", "trash", "tree"):
+    for command, (module, add_command) in PAGES.items():
         result = run_cli([command], input_text="")
         assert result.returncode == EXIT_OK
-        assert f"~~~ weed-out {command} ~~~" in result.stdout
-        assert "Usage:" in result.stdout
+        assert f"weed-out -- {command.title()}" in result.stdout
+        assert result.stdout.rstrip().endswith(args.command_help(add_command).rstrip())
+        assert f"usage: {module.USAGE}" in result.stdout
         assert result.stderr == ""
+
+
+def test_cli_command_help_leads_with_the_documented_usage(run_cli):
+    """Each subparser takes its module's USAGE, so PATH reads first, not last."""
+    for command, (module, _) in PAGES.items():
+        result = run_cli([command, "--help"], input_text="")
+        assert result.returncode == EXIT_OK
+        assert result.stdout.splitlines()[0] == f"usage: {module.USAGE}"
+
+
+def test_cli_help_shows_every_usage_line_and_lists_version(run_cli):
+    """The root usage is built from the three USAGE constants, and version is listed."""
+    result = run_cli(["--help"], input_text="")
+    assert result.returncode == EXIT_OK
+    for module, _ in PAGES.values():
+        assert module.USAGE in result.stdout
+    assert result.stdout.count("print the installed version and exit") == 2
+
+
+def test_cli_keep_reads_as_list_in_the_help(run_cli):
+    """The --keep metavar matches USAGE and the docs, not argparse's KEEP."""
+    result = run_cli(["delete", "--help"], input_text="")
+    assert "--keep LIST" in result.stdout
+    assert "KEEP" not in result.stdout
+
+
+def test_cli_help_pages_print_no_colour(run_cli, monkeypatch):
+    """argparse 3.14 colours help when forced; MONOCHROME turns it off.
+
+    Below 3.14 there is no colour to turn off, so this passes trivially.
+    """
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    for argv in (["--help"], [], ["tree"], ["delete", "--help"]):
+        result = run_cli(argv, input_text="")
+        assert "\x1b[" not in result.stdout
 
 
 def test_cli_version_flag_prints_the_name_and_a_number(run_cli):
@@ -155,6 +199,35 @@ def test_cli_stray_token_after_path_is_rejected(run_cli, sample_tree):
     assert "Usage: weed-out tree" in result.stderr
 
 
+def test_cli_space_separated_keep_is_rejected(run_cli, sample_tree):
+    """A second keep entry typed with a space is a stray, not silently dropped."""
+    result = run_cli(
+        ["delete", str(sample_tree), "--keep", "src", "keep.md"], input_text=""
+    )
+    assert result.returncode == EXIT_ERROR
+    assert "delete got a stray argument: 'keep.md'" in result.stderr
+    assert "Usage: weed-out delete" in result.stderr
+    assert result.stdout == ""
+
+
+def test_cli_space_separated_keep_commit_removes_nothing(run_cli, sample_tree):
+    """The destructive form of the typo exits before any walk runs."""
+    before = sorted(p.relative_to(sample_tree) for p in sample_tree.rglob("*"))
+    result = run_cli(
+        ["delete", str(sample_tree), "--keep", "src", "keep.md", "--commit"],
+        input_text="",
+    )
+    assert result.returncode == EXIT_ERROR
+    after = sorted(p.relative_to(sample_tree) for p in sample_tree.rglob("*"))
+    assert after == before
+
+
+def test_cli_stray_token_after_boolean_flag_is_rejected(run_cli, sample_tree):
+    result = run_cli(["tree", str(sample_tree), "--dot-files", "extra"], input_text="")
+    assert result.returncode == EXIT_ERROR
+    assert "tree got a stray argument: 'extra'" in result.stderr
+
+
 def test_cli_flags_before_command_is_argparse_error(run_cli, sample_tree):
     result = run_cli(["--keep", "keep.md", "tree", str(sample_tree)], input_text="")
     assert result.returncode == EXIT_ARGPARSE
@@ -229,8 +302,8 @@ def test_cli_tree_with_no_keep_list_keeps_every_entry(run_cli, sample_tree):
 
 def test_cli_no_keep_list_is_announced_on_stderr(run_cli, sample_tree):
     """The read-only surfaces explain why nothing is tagged."""
-    for args in (["tree"], ["delete"], ["trash"]):
-        result = run_cli([*args, str(sample_tree)], input_text="")
+    for words in (["tree"], ["delete"], ["trash"]):
+        result = run_cli([*words, str(sample_tree)], input_text="")
         assert result.returncode == EXIT_OK
         assert 'as if --keep "."' in result.stderr
         assert result.stderr.startswith("weed-out: ")

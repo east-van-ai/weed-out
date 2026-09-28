@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-28
+
+### Changed
+
+- A bare command word prints its prose, then that command's own `--help`, and
+  bare `weed-out` ends in `weed-out --help`. Help prints without colour on 3.14.
+- README is a first-visit page. `docs/DESIGN.md` and `docs/CLI.md` keep the
+  reasoning, and `docs/CLI.md` gains a table of every flag.
+
+### Fixed
+
+- A stray token after a flag, such as a second `--keep` entry typed with a
+  space, exits 1 instead of being silently dropped.
+
 ## [0.3.3] - 2026-09-23
 
 ### Changed

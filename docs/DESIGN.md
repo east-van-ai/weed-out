@@ -1,362 +1,193 @@
 # weed-out DESIGN
 
 The model: what `weed-out` builds, the decisions and refusals under it,
-and the rules the walks depend on. The command surface it presents,
-the grammar and the exit codes, is in CLI.
+and the rules the walks depend on. The command surface, the grammar and
+the exit codes, is in CLI.
 
-## Architecture
+## Scope and dependencies
 
-`weed-out` requires Python 3.9 or newer and is built on the standard
-library (`argparse`, `fnmatch`, `shutil`, `pathlib`) plus one runtime
-dependency, `send2trash` (BSD-3-Clause), used exclusively by the `trash`
-command. It cannot be an *optional* extra: the distribution target is
-`pipx`/a formal package install, so `pip install weed-out[trash]` would
-leave `trash` silently no-oping or erroring for anyone who installed the
-plain package. `send2trash` is small, stable, and widely used, which is
-why this one exception was judged acceptable. It is not an invitation
-to add more. The GitHub CI matrix tests Python 3.9 through 3.14.
+`weed-out` needs Python 3.9 or newer, and CI tests 3.9 through 3.14. It is
+built on the standard library plus one runtime dependency, `send2trash`
+(BSD-3-Clause), used only by `trash`.
 
-The implementation is split by responsibility: `src/weed_out/args.py`
-(argument parsing), `keep.py` (keep-list resolution and the
-protected-directory pass), `tree.py` (`tree` display), `delete.py` (the
-delete/trash/dry-run walk, and `run_removal`, the shared pipeline both
-removal commands run), `errors.py` (the two exception types `main()` catches), and
-`cli.py` (the banner, the exit codes, and the command table the dispatch reads).
-`delete`, `trash` and `tree` each have a thin surface module, `cli_delete.py`,
-`cli_trash.py`, `cli_tree.py`, holding that command's documentation, its usage line,
-and a `run()` that delegates to the engines. A surface module exists so a command
-has a document of its own to print, not to hold logic. Data is plain
-`Path`/`set`/`str`; the only state is the filesystem being read and, on
-`delete`/`trash` with `--commit`, written.
+That dependency cannot be an optional extra. The tool is installed with
+`pipx` as a whole package, and a `weed-out[trash]` extra would leave
+`trash` broken for anyone who installed the plain one. `send2trash` is
+small, stable, and widely used, which is why this one exception is
+acceptable. It is not an invitation to add more.
 
-### Dependencies live in `pyproject.toml` only
+Dependencies live in `pyproject.toml` only: runtime in
+`[project] dependencies`, dev tooling in `[dependency-groups]`. There is
+no requirements file, because a second file answering the same question
+can drift with nothing to catch it. Dev tooling is a group rather than an
+extra because an extra is published metadata, and `weed-out[dev]` would
+become a supported offer. A group stays in the working copy.
 
-There is no `requirements.txt` and no `requirements-dev.txt`. The
-runtime package sits in `[project] dependencies`, dev tooling in
-`[dependency-groups]`. One file, two tables, nothing to keep in sync by
-hand. Install both halves with one command:
+Dev pins are exact while the runtime floor is not. A pinned `ruff`
+freezes a rule set, so local and CI agree on what counts as a failure.
 
-```bash
-pip install -e . --group dev
-```
+## Keep resolution
 
-A runtime requirements file would repeat `Send2Trash>=1.8` from
-`pyproject.toml`: two files answering one question, with nothing able to
-check one against the other. A dev requirements file is onboarding
-scaffolding for a contributor who does not exist here. `weed-out` is
-installed with `pipx` and run, not cloned and contributed to.
+A keep entry comes from `--keep` or from `.weed-out-ignore`, and every
+entry is one of two kinds.
 
-Dev tooling belongs in `[dependency-groups]` rather than
-`[project.optional-dependencies]`. An extra is published metadata: it
-lands in the wheel, appears on PyPI, and turns `pip install
-weed-out[dev]` into a supported offer. Dev tooling is a fact about the
-working copy, not about the installed artifact. A dependency group stays
-local and never ships.
+**Exact paths** (`src/`, `README.md`) name one entry. Each drags its
+parent chain up to `PATH` along with it, so a kept file always keeps its
+folders. A folder kept that way survives as a *shell*: it holds the named
+entry and nothing else. `--keep "src/main.py"` leaves `src/` holding only
+`main.py`.
 
-The dev pins stay exact while the runtime floor does not, and that
-asymmetry is deliberate. A pinned `ruff` freezes a rule set, so local
-and CI agree on what counts as a lint failure. `pytest` has no rule set
-to freeze and stays unpinned.
+**Glob patterns** (`*.md`, `src/**/*.py`) don't name one path, so they
+are tested against every entry the walk meets.
 
-`--group` needs pip 25.1 or newer, so CI upgrades pip before installing
-anything. The 3.9 leg of the matrix tops out at pip 26.0.1, which still
-clears that floor.
+### Path-scoped patterns
 
-## The Keep/Delete Pipeline
+A pattern's behaviour is decided by whether it contains `/`.
 
-`main()` runs: answer the bare words (the banner, or a command's own
-doc) → parse args → dispatch to the command's `run()`. `run()` resolves
-`PATH` and checks it is a directory, then resolves the keep list and
-either prints the tree (the `tree` command, read-only) or walks and
-removes (`run_removal` in `delete.py`, read-only unless `--commit` was
-passed). A `PATH` that fails that check, or a walk with neither `--keep`
-nor `.weed-out-ignore` supplying an entry under `--commit`, is reported
-by raising, not returning: `main()` catches it and exits 1.
+- No `/`: matched against the bare filename at any depth. `*.md` protects
+  every `.md` file in the tree.
+- A `/`: matched against the path relative to `PATH`, gitignore-style.
+  `*` stays inside one segment, and `**` matches zero or more whole
+  segments. `src/*.py` protects direct children only, and `src/**/*.py`
+  protects any depth. A leading or trailing `/` is stripped first, so
+  `/src/*.py` and `src/*.py` are the same pattern.
 
-### Two-phase keep resolution: exact paths vs. glob patterns
+Anchored matching was chosen over running `fnmatch` on the whole path as
+one string. `weed-out` exists to carve release trees, so behaving like
+git's own ignore patterns is a goal, not a nicety. `.dockerignore`,
+`rsync`, and bash `globstar` anchor the same way.
 
-`--keep` entries are split at parse time into two buckets:
+The cost is accepted. Whole-string matching can only over-protect.
+Anchored matching lets a user who forgets `**` under-protect a nested
+file and lose it on `--commit`. Three things stand against that: `**` is
+taught early wherever the tool is taught, the read-only surfaces warn
+when a path pattern provably narrows, and `tree` is always meant to run
+first.
 
-- **Exact paths** (`src/`, `README.md`) resolve immediately to absolute
-  paths, and their full parent chain up to `PATH` is added to
-  `exact_keep` (`build_exact_keep`), so a kept file always drags its
-  containing directories along with it. A dragged-in ancestor survives as
-  a *shell* only: it is kept because a named descendant sits under it,
-  which protects the directory entry itself and nothing else inside it.
-  `--keep "src/main.py"` leaves `src/` holding just `main.py`.
-  Resolution is **lexical**, never `Path.resolve()`: `os.path.normpath`
-  against the already-resolved `PATH`, so `.` and `..` collapse without
-  the filesystem being consulted and a symlink is never followed. An
-  exact keep therefore names the entry exactly as written, which is the
-  only form the walk can ever match, since the walk builds paths by
-  descending from `PATH` with `iterdir()` and never steps through a link.
-  See "Identity resolution never follows a link" below.
-- **Glob patterns** (`*.md`) are matched by filename against every
-  entry during a full tree walk, since a pattern doesn't correspond to
-  one fixed path; it has to be evaluated per-file.
-
-### Path-scoped glob patterns
-
-Each pattern is routed individually, decided once by whether it
-contains `/`:
-
-- No `/`: matched against the bare filename, tree-wide. `*.md`
-  protects every `.md` file at any depth.
-- Contains `/`: matched against the path relative to `PATH`,
-  **gitignore-style**: `*` stays within one path segment (it does not
-  cross `/`), and `**` matches zero or more segments, giving explicit
-  opt-in recursion (`src/weed_out/*.py` protects direct children only;
-  `src/weed_out/**/*.py` protects any depth below it). A leading and/or
-  trailing `/` on the pattern is stripped before matching, so
-  `/src/*.py` and `src/*.py` are equivalent; without that, a leading
-  slash would match nothing at all, since a root-relative path never
-  itself starts with `/`.
-
-Anchored matching was chosen over the simpler option of `fnmatch`
-against the full path as a single string. `weed-out` is explicitly a
-git-orphan-branch release-packaging helper, so consistency with git's
-own ignore-pattern semantics is a first-class goal here rather than a
-nice-to-have; and anchoring `*` at `/` while requiring `**` for
-recursion is the near-universal convention (`.gitignore`,
-`.dockerignore`, `rsync` filter rules, npm's `minimatch`, bash
-`globstar`, Python's own `glob`/`pathlib.Path.glob`). Raw
-`fnmatch.fnmatch()` on a whole path string is the outlier: it has no
-concept of path components at all.
-
-Known, accepted tradeoff: unlike full-string matching, which can only
-ever over-protect, anchored matching means a user who forgets `**` and
-assumes recursion could under-protect a nested file and lose it on
-`--commit`. Three things mitigate it: `**` is introduced plainly and
-early wherever the tool is taught rather than buried as a footnote, the
-read-only surfaces warn when a path pattern provably narrows (CLI
-carries that warning's rules), and the tool's primary safety mechanism
-stands behind both: always run `tree` before `--commit`.
-
-`pathlib.PurePath.match()` was considered as the matching engine and
-rejected: its `**` support only landed in Python 3.13, and `weed-out`
-supports 3.9+, so it would behave inconsistently across the supported
-matrix. `path_pattern_match`/`_segments_match` in `keep.py` is a small
-hand-rolled recursive matcher instead: stdlib only, reusing
-`fnmatch.fnmatch` per path segment, so anchoring falls out for free,
-since a single segment never contains `/`.
-
-One implementation subtlety. `print_tree` recurses by passing the
-current subdirectory as the next call's traversal cursor, but
-path-scoped matching needs the *original* `PATH` to compute a stable
-relative path. So `print_tree` takes two separate parameters,
-`directory` (shifts every recursive call) and `keep_root` (passed
-through unchanged). Collapsing them into one would make the `tree`
-preview silently diverge from what `--commit` deletes below the top
-level.
+The matcher is hand-rolled, applying `fnmatch` one segment at a time.
+`PurePath.match()` was rejected because its `**` support arrived only in
+Python 3.13, so it would behave differently across the supported range.
 
 ### The `.weed-out-ignore` file
 
-A checked-in, per-repo file holding the same kind of entries as `--keep`
-(exact paths and glob patterns), one per line, so a project's keep list
-doesn't have to be retyped on every invocation.
+A checked-in file holding the same kind of entries as `--keep`, one per
+line, so a project states its keep list once.
 
-- **Discovery: automatic, root-only.** `weed-out` looks for it directly
-  at `PATH`, with no flag to opt in and no `.gitignore`-style walk into
-  subdirectories. Automatic reading is safe by construction: the file
-  can only ever *add* to the keep set, never cause a deletion, so there
-  is none of the silent-behaviour-change risk a flag that changed what
-  gets deleted would carry. Root-only because the tool's model is
-  "state the keep list once," not per-directory rules.
-- **`--keep` is therefore optional.** `read_ignore_file` (`keep.py`)
-  supplies entries the same way `--keep` does, so `weed-out tree .`
-  works on its own when the file exists. If **neither** source yields an
-  entry, the run keeps everything rather than nothing, and only
-  `--commit` treats that as an error, which is CLI's rule to state.
-  Silence must never be able to mean "delete everything in `PATH`."
-- **Comments and blank lines are skipped** (`#`-prefixed, or empty
-  after stripping), following `.gitignore` convention. It matters here
-  because the file is meant to be a reviewable, git-blame-able record,
-  and comments let it explain *why* an entry survives, not just *that*
-  it does.
-- **Newline-separated, not comma-separated.** `--keep` is one comma-
-  joined string because it is a CLI flag; that's a constraint of the
-  flag, not a design choice worth repeating in a file. One entry per
-  line diffs cleanly in git, which is the whole point of checking it in.
-- **Merges with `--keep`, doesn't override it.** No real conflict here,
-  since neither source can say "delete this." Anything named in either
-  source survives and is fed to the same two-phase resolution
-  (`build_exact_keep`/`build_protected_dirs`). The merge dedupes and
-  preserves order (`dict.fromkeys`, `--keep` first), so warnings come
-  out in a consistent order across runs.
-- **No negation syntax: by design, not "not yet."** A `.gitignore`-style
-  `!pattern` ("keep all `.md` except `DRAFT.md`") was considered and
-  rejected. Keeping the grammar keep-only is what makes the union-merge
-  unambiguous: with only "explicitly protected" and "not mentioned" as
-  states, no config can accidentally delete something you meant to keep.
-  If negation is ever added, "keep wins" is the conflict rule.
-- **Naming.** Follows the `.dockerignore`/`.eslintignore` reading of
-  "ignore" (scoped to what the tool *does*) rather than `.gitignore`'s
-  "excluded from tracking". `weed-out`'s action is delete, so entries
-  here are ignored *by the delete pass*, i.e. protected. `--keep` is not
-  renamed to match: different jobs (per-invocation flag vs. persistent
-  checked-in file), and ESLint doesn't call its flag `--eslintignore`
-  either.
+- **Read automatically, from `PATH` only.** No flag turns it on, and
+  nested copies are ignored. Reading it without being asked is safe
+  because the file can only add to what survives, never cause a
+  deletion. Root-only, because the model is one keep list, not
+  per-folder rules.
+- **It makes `--keep` optional.** If neither source yields an entry, the
+  run keeps everything rather than nothing. Silence must never mean
+  "delete everything in `PATH`".
+- **One entry per line, `#` for comments.** It diffs cleanly, and a
+  comment can say *why* an entry survives, which is the point of checking
+  it in.
+- **It merges with `--keep`.** Neither can say "delete this", so there is
+  nothing to conflict. Anything named in either source survives.
+- **No `!pattern` negation, by design.** With only "protected" and "not
+  mentioned" as states, no config can delete something you meant to keep
+  by accident. If negation is ever added, keep wins.
+- **The name** follows `.dockerignore`: an entry is ignored by what the
+  tool does, and `weed-out` deletes.
 
 ## Walk rules
 
-Four rules the walks depend on. Each is cheap to violate by accident.
+Four rules the walks depend on. Each is cheap to break by accident.
 
 ### Survival propagates both ways
 
 Protection travels **up** from a kept entry and **down** from a kept
-directory. Neither direction is derivable from the other.
+directory. Neither direction follows from the other.
 
-- **Up.** `build_protected_dirs` walks the tree once, finds every
-  directly-kept entry (`is_directly_kept`: exact match, pattern match,
-  or the dot-file/dot-dir default), and unions each one's parent chain
-  into `protected_dirs`. Not derivable from `exact_keep` alone: a file
-  kept only by a glob still has to protect its ancestors, even though
-  none of their names match anything in `--keep`.
-- **Down.** A directly-kept *directory* also lands in `kept_roots`
-  (the entries as named, before the ancestor-chain expansion), and
-  `is_under_kept_dir(p, kept_roots)` protects everything beneath it.
-  `Path.parents` yields the full ancestor chain, so one check covers any
-  depth, not just immediate children.
+- **Up.** Every directly-kept entry protects its whole parent chain. A
+  file kept only by a glob still has to protect its folders, even though
+  no folder name matches anything in the keep list.
+- **Down.** A directly-kept directory protects everything beneath it, at
+  any depth.
 
-The down direction has to be blind to *why* the directory is kept.
-`build_exact_keep` supplies only the exact-path entries; one kept by a
-glob on its own name (`--keep "*.config"` matching `.config/`) or by
-`--dot-dirs` reaches `kept_roots` only because `build_protected_dirs`
-collects every directory where `is_directly_kept` returns true, whatever
-the route, riding the walk that already exists with no second `rglob`.
-Miss this and the shell survives while its contents are deleted, the
-opposite of what `--keep "src/"` and `--dot-dirs` both promise.
+The down direction has to ignore *how* the directory came to be kept. A
+directory kept by a glob on its own name, or by `--dot-dirs`, protects
+its contents exactly as one named by path does. Miss this and the shell
+survives while its contents are deleted, the opposite of what
+`--keep "src/"` and `--dot-dirs` both promise.
 
-Blind to the route, but not to the *reason*: that classification is
-tested against `kept_roots`, never against `exact_keep`. `exact_keep` is
-ancestor-inflated by design, so testing against it files every ancestor
-of a named file as a directly-kept directory too, and
-`--keep "src/main.py"` ends up protecting the whole of `src/`: the down
-direction firing on a directory nobody named. The narrower set is safe
-for the up direction as well: an ancestor's parent chain is a subset of
-its named descendant's, and the descendant already contributes the
-ancestor itself, so `protected_dirs` comes out identical either way.
+It must not fire on a shell, though. A folder kept only because a named
+file sits inside it is not a directly-kept directory. Treat it as one and
+`--keep "src/main.py"` protects the whole of `src/`.
 
-Together: **an unkept directory cannot contain anything kept, at any
-depth.** The collapse below rests entirely on that.
+Together, the two directions guarantee that **an unkept directory
+contains nothing kept, at any depth.** The collapse below rests entirely
+on that.
 
-### `should_keep` is the only authority on survival
+### One function decides survival
 
-Anything deciding what survives must call `should_keep`. A second
-opinion expressed as a membership test against one of the sets that
-*feeds* it (`exact_keep`, `protected_dirs`, `kept_roots`) drifts out
-of agreement with the walk the moment another way to keep something is
+Everything that decides what survives asks the same function. A second
+opinion drifts out of agreement the moment a new way to keep something is
 added.
 
-There is no empty-directory cleanup pass, because it would have no
-legitimate work. `should_keep` already answers for every directory. A
-`kept_roots` directory has everything beneath it protected. A
-`protected_dirs` directory is there *because* a kept descendant
-survives. A directory that is neither is doomed and recorded whole, so
-it never empties out: it disappears. An unkept empty directory is
-already an ordinary target. All such a pass can add is a wrong answer.
-Testing emptiness against `exact_keep`, one survival route among
-several, deletes an already-empty directory kept via `--dot-dirs`, via a
-glob on its own name, or by sitting under an exact-kept parent.
+This is why there is no empty-directory cleanup pass. Every directory
+already has an answer: kept, protected because something inside survives,
+or doomed and removed whole. An unkept empty directory is an ordinary
+target. A cleanup pass can only add a wrong answer. Testing emptiness
+against one route to survival deletes an empty directory kept by
+`--dot-dirs`, or by a glob on its own name.
 
-### Identity resolution never follows a link
+### Naming a link keeps the link
 
-`build_exact_keep` turns a `--keep` entry into a path lexically, with
-`os.path.normpath` against the already-resolved `PATH`, never
-`Path.resolve()`. `resolve()` follows the whole path *including its
-final component*, so `--keep "link_to_outside"` would name the link's
-target: a path the walk never produces. The named symlink would be
-judged unkept and removed, and the target's ancestor chain protected in
-its place. Naming a thing has to keep that thing.
+An exact keep entry is turned into a path without following links. Full
+resolution would follow a link in the entry's last component, so
+`--keep "some_link"` would name the link's *target*, a path the walk
+never produces. The link would be judged unkept and removed. Naming a
+thing has to keep that thing.
 
-This is the identity half of the atomic-leaf rule below. `is_real_dir`
-stops the walk from stepping through a link; lexical resolution stops
-`--keep` from naming anything on the far side of one. Between them, no
-path outside `PATH` can enter `exact_keep` at all.
+One consequence, stated rather than engineered away. An entry whose path
+runs *through* a symlinked directory, such as `--keep "link/f.txt"`, never
+matches, since the walk never goes there. The ancestor rule still keeps
+`link` itself, so the entry behaves like `--keep "link"`.
 
-Two consequences, stated rather than engineered away. A keep entry whose
-path runs *through* a symlinked directory (`--keep "link/file.txt"`)
-never matches, because the walk doesn't generate that path; the ancestor
-rule still protects the part of the chain that does exist, so the link
-itself survives as a shell and the entry ends up behaving exactly like
-`--keep "link"`. And `..` inside an entry collapses lexically, which is
-not what the kernel would do across a link; the entry it yields still
-names something under `PATH`, or nothing at all.
+Glob patterns need none of this. They are matched against the entry the
+walk produced, so no resolution is involved, and `--keep "link_*"` keeps
+the link.
 
-Glob patterns need none of this. `matches_any` compares against the
-name and relative path of the entry the walk produced, so no resolution
-is involved, and `--keep "link_to_*"` protects the link.
+### A symlink is never walked through
 
-### `is_real_dir` is the only authority on traversal
+Only a real directory is ever descended into or removed as a tree. A
+symlink is a leaf, whether it points at a file or a directory, and
+whether or not it is kept: kept whole, removed whole, never entered.
 
-`is_real_dir(entry)` is `entry.is_dir() and not entry.is_symlink()`:
-true only for a real directory node, never a symlink, whatever it points
-at and whether or not it is kept. It governs every "recurse into this /
-remove this whole" decision: `collect_targets` and `print_tree`'s
-recursion branches, `delete_rest`'s commit-mode removal action, and
-`report_dry_run`'s directory count.
+A walk that follows a symlink-to-directory treats everything behind it as
+part of `PATH`, even when the target lives somewhere else entirely. Two
+facts make the rule concrete.
 
-A bare `entry.is_dir()` in a walk is the bug: it follows symlinks, so a
-walk steps through a symlink-to-directory as if it were an ordinary
-subdirectory, and everything below the link's target becomes fair game
-for `should_keep` even when that target lives entirely outside `PATH`.
-Any route to being kept (exact path, a pattern on its own name,
-`--dot-dirs`, or just sitting under a kept ancestor) is enough to send
-the walk through the link.
+- **A link is removed with `unlink()`, never `rmtree()`.** `rmtree()`
+  refuses a path that is itself a symlink. With errors ignored, that
+  refusal is silent, so a link `tree` promised to remove would survive
+  `--commit`. `unlink()` removes the link and leaves its target alone.
+- **`tree` shows every link's target**, as `name -> target`, dangling
+  ones included. An entry that looks like a folder but isn't expanded has
+  to say why, or "not walked into" reads as "empty".
 
-So a symlink is an atomic leaf, file or directory alike: kept whole,
-removed whole, never descended into. Four facts make that rule specific
-rather than stylistic.
-
-- **`shutil.rmtree()` refuses a path that is itself a symlink**
-  (`OSError`, "Cannot call rmtree on a symbolic link"; `shutil.py`'s own
-  comment cites bug #1669), and `ignore_errors=True` swallows the
-  refusal. A doomed symlink-to-directory reported by `tree`/`--dry-run`
-  would survive `--commit` untouched. `Path.unlink()` removes the link
-  node without touching its target.
-- **`entry.exists()` follows symlinks**, so a dangling one reports
-  `False`. A guard on `exists()` alone would skip a target the preview
-  had just promised to remove, so the guard is
-  `if not (entry.exists() or entry.is_symlink()): continue`.
-- **`rglob` does not descend through symlinks** on 3.9, 3.12 or 3.14
-  (verified on all three), so `build_protected_dirs` needs no guard of
-  its own.
-- **`readlink()` does not require the target to exist**, so `print_tree`
-  marks every symlink with its literal, unresolved target
-  (`name -> target`, `ls -l`-style), dangling ones included. An entry
-  that looks like a directory but isn't expanded has to say why, or "not
-  descended into" reads as "empty".
-
-### Collapsing doomed directories, and what the walks report
+### Collapsing doomed directories
 
 Both walks stop at a directory that isn't kept. `tree` prints it as one
-tagged line; `delete_rest` records it as one target and hands the whole
-directory to `shutil.rmtree` or `send2trash` in a single call. Survival
-propagating both ways is what licenses this: no walk ever has to descend
-into a doomed directory to find a survivor.
+tagged line, and removal hands it to `rmtree` or `send2trash` in one call.
+Survival propagating both ways is what allows this: no walk ever needs to
+look inside a doomed directory to find a survivor. It also means the
+removal targets never nest, so they can be removed in any order.
 
-Because the descent stops at every doomed entry, the collected targets
-are pairwise non-nested by construction and can be removed once each, in
-any order. Only a flat `rglob("*")` walk would need a deepest-first sort
-to remove files before their parents.
+Collapse must not stop *early*. A **kept** directory holding doomed
+children still has to be walked into. Recurse when kept, record and stop
+when not. Keeping those two cases apart is the whole correctness argument.
 
-Collapse must not stop *early*, though: a **kept** directory holding
-doomed children still has to be descended into. Recurse when kept,
-record-and-stop when not. Keeping those two conditions distinct is the
-whole of the correctness argument, and what the cases in
-`tests/test_delete_walk.py` exist to pin down.
-
-The payoff is largest for `trash`, where a 3,000-file `venv/` moves to
-the OS trash as one recoverable folder rather than 3,000 loose items;
-for `tree` it is legibility. Both read-only surfaces close with a tally
-whose load-bearing number is how many removal targets are collapsed
-directories: without it a collapsed `venv/` reads as a single doomed
-file and the preview understates what `--commit` is about to do, which
-this tool's primary safety mechanism cannot afford. The dry-run count
-line carries the same correction, its `N` counting removal roots rather
-than files. Symlinks count in neither tally, since `is_real_dir` gates
-both: `collapsed` means "a real subtree was elided for brevity," and a
-symlink is atomic on principle, not for brevity.
+The payoff is biggest for `trash`: a 3,000-file `venv/` goes to the OS
+trash as one recoverable folder, not 3,000 loose items. For `tree` it is
+legibility. Both read-only surfaces report how many targets are collapsed
+directories, because without that a collapsed `venv/` reads as one doomed
+file, and the preview understates what `--commit` will do. Symlinks never
+count as collapsed. A collapsed directory is a real subtree elided for
+brevity, and a symlink is a leaf on principle.
 
 ## Use of AI
 

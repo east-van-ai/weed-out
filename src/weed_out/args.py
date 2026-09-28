@@ -1,12 +1,23 @@
 """Argument parsing for weed-out's CLI grammar."""
 
 import argparse
+import sys
 from importlib import metadata
 
 from weed_out import cli_delete, cli_trash, cli_tree
 
 PROG = "weed-out"
 """The word typed on the command line, which the parser and `version_line` share."""
+
+PATHS = """\
+paths:
+  PATH      the directory to operate on. Use `.` for the current directory.
+            A .weed-out-ignore file there is read and merged with --keep.
+  PATH comes right after COMMAND, then options in any order."""
+"""The section `weed-out --help` closes with, since PATH belongs to no one command."""
+
+MONOCHROME = {"color": False} if sys.version_info >= (3, 14) else {}
+"""argparse's `color=` switch, from 3.14. Older versions print no colour."""
 
 
 def installed_version():
@@ -33,6 +44,22 @@ def version_line():
     return f"{PROG} {installed_version()}"
 
 
+def leading_paths(tokens):
+    """Return the tokens ahead of the first flag.
+
+    The documented grammar puts PATH before every flag, so the slot is
+    read off the front of the command line. What argparse resolved from
+    anywhere else is discarded, since how much it tolerates depends on
+    the interpreter.
+    """
+    paths = []
+    for token in tokens:
+        if token.startswith("-"):
+            break
+        paths.append(token)
+    return paths
+
+
 def add_common_options(parser):
     """Add the PATH positional and the options every command shares.
 
@@ -40,23 +67,30 @@ def add_common_options(parser):
     `main()` and gets documentation instead of a usage error. Its parsed
     value goes unused: `main()` reads the slot itself.
     """
-    parser.add_argument(
+    paths = parser.add_argument_group("paths")
+    paths.add_argument(
         "path",
         metavar="PATH",
         nargs="?",
-        help="Directory to operate on. Use `.` for the current directory.",
+        help="the directory to operate on",
     )
     parser.add_argument(
         "--keep",
-        help="Comma-separated list of files/dirs/glob patterns to keep. "
-        "Optional if a .weed-out-ignore file at PATH supplies entries instead. "
-        "With neither, everything is kept and --commit is refused.",
+        metavar="LIST",
+        help="comma-separated files, directories, and glob patterns to keep; "
+        "optional if .weed-out-ignore supplies entries",
     )
-    parser.add_argument("--dot-files", action="store_true", help="Keep dotfiles")
-    parser.add_argument("--dot-dirs", action="store_true", help="Keep dot-directories")
+    parser.add_argument(
+        "--dot-files", action="store_true", help="keep dotfiles, even if not listed"
+    )
+    parser.add_argument(
+        "--dot-dirs",
+        action="store_true",
+        help="keep dot-directories, even if not listed",
+    )
 
 
-def add_mode_flags(parser):
+def add_mode_flags(parser, commit_help):
     """Add the mutually exclusive --dry-run/--commit pair to a removal command.
 
     Only `delete` and `trash` get these. `tree` can do nothing but look, so
@@ -67,58 +101,75 @@ def add_mode_flags(parser):
     group.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report what would be removed without touching anything. "
-        "This is the default when --commit is not passed.",
+        help="report what would be removed, touching nothing (default)",
     )
-    group.add_argument(
-        "--commit",
-        action="store_true",
-        help="Actually carry the removal out. Permanent for `delete` -- no undo.",
+    group.add_argument("--commit", action="store_true", help=commit_help)
+
+
+def add_delete(subparsers):
+    """Add the `delete` subparser and return it."""
+    delete = subparsers.add_parser(
+        "delete", help=cli_delete.HELP, usage=cli_delete.USAGE, allow_abbrev=False
     )
+    add_common_options(delete)
+    add_mode_flags(delete, "actually remove; permanent, no undo")
+    return delete
+
+
+def add_trash(subparsers):
+    """Add the `trash` subparser and return it."""
+    trash = subparsers.add_parser(
+        "trash", help=cli_trash.HELP, usage=cli_trash.USAGE, allow_abbrev=False
+    )
+    add_common_options(trash)
+    add_mode_flags(trash, "actually send to the OS trash")
+    return trash
+
+
+def add_tree(subparsers):
+    """Add the `tree` subparser and return it."""
+    tree = subparsers.add_parser(
+        "tree", help=cli_tree.HELP, usage=cli_tree.USAGE, allow_abbrev=False
+    )
+    add_common_options(tree)
+    return tree
 
 
 def build_parser():
-    """Construct the argument parser for the whole CLI."""
-    # No abbreviation anywhere: --com must not silently mean --commit.
-    # argparse matches any unambiguous prefix unless told otherwise, and
-    # add_parser() inherits nothing from this parser, so every subparser
-    # below repeats the keyword. Every flag weed-out defines lives on a
-    # subparser, so setting it here alone would change nothing.
-    p = argparse.ArgumentParser(
+    """Construct the argument parser for the whole CLI.
+
+    `add_parser()` inherits nothing from this parser, so each subparser
+    repeats `allow_abbrev=False`.
+    """
+    parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Delete everything except specified paths/patterns.",
+        **MONOCHROME,
+        usage=f"{cli_delete.USAGE}\n       {cli_trash.USAGE}\n       {cli_tree.USAGE}",
+        epilog=PATHS,
+        # Keeps the epilog's lines as written rather than joined into one paragraph.
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
     )
 
-    subparsers = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    version_help = "Print the installed version and exit."
-    # Fires during parsing, ahead of the required-command check, so this
-    # answers with no command word and calls sys.exit(0) itself.
-    p.add_argument(
+    version_help = "print the installed version and exit"
+    parser.add_argument(
         "--version", action="version", version=version_line(), help=version_help
     )
-    # No PATH, no flags: cli.py's Command entry reads version_line
-    # directly, not a module docstring, so table membership is safe.
-    subparsers.add_parser(
-        "version", help=version_help, description=version_help, allow_abbrev=False
-    )
 
-    delete_p = subparsers.add_parser(
-        "delete", help=cli_delete.HELP, description=cli_delete.HELP, allow_abbrev=False
-    )
-    add_common_options(delete_p)
-    add_mode_flags(delete_p)
+    add_delete(subparsers)
+    add_trash(subparsers)
+    add_tree(subparsers)
+    subparsers.add_parser("version", help=version_help, allow_abbrev=False)
 
-    trash_p = subparsers.add_parser(
-        "trash", help=cli_trash.HELP, description=cli_trash.HELP, allow_abbrev=False
-    )
-    add_common_options(trash_p)
-    add_mode_flags(trash_p)
+    return parser
 
-    tree_p = subparsers.add_parser(
-        "tree", help=cli_tree.HELP, description=cli_tree.HELP, allow_abbrev=False
-    )
-    add_common_options(tree_p)
 
-    return p
+def command_help(add_command):
+    """Return one command's own `--help` text, as argparse prints it.
+
+    `add_command` is `add_delete`, `add_trash`, or `add_tree`.
+    """
+    subparsers = argparse.ArgumentParser(prog=PROG, **MONOCHROME).add_subparsers()
+    return add_command(subparsers).format_help()

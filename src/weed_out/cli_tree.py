@@ -1,28 +1,16 @@
 """
-# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ weed-out tree ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
-#
-# https://github.com/east-van-ai/weed-out
-#
-# Print a tree of PATH, tagging everything a removal would take with [REMOVE].
-# It never touches the filesystem, and it takes no --dry-run or --commit at
-# all. This is the tool's primary safety mechanism.
-#
-# Usage:
-#
-#    weed-out tree PATH [--keep LIST] [--dot-files] [--dot-dirs]
-#
-# PATH is the directory to operate on. Use `.` for the current
-# directory. A .weed-out-ignore file there (newline-separated,
-# # comments and blank lines allowed) is read automatically and merged
-# with --keep.
-#
-# Options:
-#
-#    --keep LIST         comma-separated files/dirs/glob patterns to keep.
-#                        Optional if .weed-out-ignore supplies entries
-#                        instead. With neither, everything is kept.
-#    --dot-files         keep dotfiles, even if not listed in --keep
-#    --dot-dirs          keep dot-directories, even if not listed in --keep
+        weed-out -- Tree
+
+https://github.com/east-van-ai/weed-out
+
+Print a tree of PATH, tagging everything a removal would take with [REMOVE].
+It never touches the filesystem, and it takes no --dry-run or --commit at
+all. This is the tool's primary safety mechanism: run it before any
+--commit.
+
+Keep entries come from --keep, comma-separated, and from a .weed-out-ignore
+file at PATH, one per line, with # comments and blank lines allowed. The two
+are merged. With neither, everything is kept.
 """
 
 from pathlib import Path
@@ -36,7 +24,7 @@ from weed_out.keep import (
 )
 from weed_out.tree import format_summary, print_tree
 
-HELP = "Print a tree tagging what would be removed. Never touches the filesystem."
+HELP = "print a tree tagging what would be removed; read-only"
 USAGE = "weed-out tree PATH [--keep LIST] [--dot-files] [--dot-dirs]"
 SLOTS = ("PATH",)
 
