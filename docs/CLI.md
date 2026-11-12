@@ -6,18 +6,22 @@ model underneath, and the reasoning that produced it, is in DESIGN.
 
 ## Grammar
 
-`weed-out <delete | trash | tree> PATH [--keep LIST] [--dry-run | --commit]
-[--dot-files] [--dot-dirs]`. The command comes first and `PATH` follows it.
-Flags come last, in any order among themselves.
+```text
+weed-out <delete | trash> PATH [--keep LIST] [--dry-run | --commit] [--dot-files] [--dot-dirs]
+weed-out tree PATH [--keep LIST] [--dot-files] [--dot-dirs]
+```
+
+The command comes first and `PATH` follows it. Flags come last, in any
+order among themselves. `tree` takes no mode flag.
 
 ### Flags
 
 | Flag | What it decides |
 | --- | --- |
 | `--keep LIST` | Comma-separated paths and globs. Adds to `.weed-out-ignore`. |
-| `--dry-run` | Report only. The same as giving no mode flag, spelled out. |
+| `--dry-run` | Report only, the same as no mode flag. `tree` refuses it. |
 | `--commit` | Carry the removal out. Excludes `--dry-run`. `tree` refuses it. |
-| `--dot-files` | Keep every dotfile, listed or not. |
+| `--dot-files` | Keep every dotfile and dot-named symlink, listed or not. |
 | `--dot-dirs` | Keep every dot-directory and its contents, listed or not. |
 
 ### Why the action is a command

@@ -818,3 +818,35 @@ def test_cli_tree_and_dry_run_agree_about_a_named_symlink(run_cli, linked_tree):
     assert "archive/  [REMOVE]" in tree.stdout
     assert str(linked_tree / "archive") in dry_run.stdout
     assert str(linked_tree / "inside") not in dry_run.stdout
+
+
+def test_cli_tree_and_dry_run_agree_about_dot_symlinks(run_cli, tmp_path):
+    """Both read-only walks name the same doomed set under each dot flag,
+    and a link's target has no say in it."""
+    root = tmp_path.resolve()
+    (root / "sub").mkdir()
+    (root / "plain.txt").write_text("plain\n")
+    (root / ".dirlink").symlink_to("sub")
+    (root / ".filelink").symlink_to("plain.txt")
+    (root / ".dangling").symlink_to("nowhere")
+
+    expected = {
+        "--dot-files": {"sub"},
+        "--dot-dirs": {".dangling", ".dirlink", ".filelink", "sub"},
+    }
+    for flag, doomed in expected.items():
+        keep = ["--keep", "plain.txt", flag]
+        tree = run_cli(["tree", str(root), *keep], input_text="")
+        dry_run = run_cli(["delete", str(root), *keep], input_text="")
+        tree_doomed = {
+            line.split("── ")[1].split()[0].rstrip("/")
+            for line in tree.stdout.splitlines()
+            if line.endswith("[REMOVE]") and "── " in line
+        }
+        dry_run_doomed = {
+            line[len(str(root)) + 1 :]
+            for line in dry_run.stdout.splitlines()
+            if line.startswith(f"{root}/")
+        }
+        assert tree_doomed == doomed
+        assert dry_run_doomed == doomed

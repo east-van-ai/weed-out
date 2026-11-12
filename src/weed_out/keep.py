@@ -215,9 +215,9 @@ def is_directly_kept(
     rel_path = p.relative_to(root).as_posix()
     if matches_any(p.name, rel_path, patterns):
         return True
-    if p.is_dir() and dot_dirs and p.name.startswith("."):
-        return True
-    return p.is_file() and dot_files and p.name.startswith(".")
+    if p.name.startswith("."):
+        return dot_dirs if is_real_dir(p) else dot_files
+    return False
 
 
 def build_protected_dirs(
@@ -271,7 +271,8 @@ def is_real_dir(entry: Path) -> bool:
 
     The single discriminator for every "recurse into this / bulk-remove
     this whole" decision in the walks, because a symlink is an atomic
-    leaf.
+    leaf. For the same reason it splits `--dot-dirs` from `--dot-files`,
+    so a dot-named symlink is a dotfile, whatever it points at.
     """
     return entry.is_dir() and not entry.is_symlink()
 

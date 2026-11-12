@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-12
+
+### Changed
+
+- CI tests Python 3.15, and runs the 3.9 job on `ubuntu-24.04`, which still has a 3.9
+  build.
+
+### Fixed
+
+- A dot-named symlink counts as a dotfile, whatever it points at, dangling included.
+  `--dot-files` keeps it, and `--dot-dirs` no longer keeps a link to a directory.
+
 ## [0.3.4] - 2026-09-28
 
 ### Changed

@@ -5,6 +5,10 @@ These call the functions directly (no subprocess), using the sample_tree
 fixture from conftest.py.
 """
 
+import os
+
+import pytest
+
 from weed_out.keep import (
     build_exact_keep,
     build_protected_dirs,
@@ -573,9 +577,42 @@ def test_directly_kept_symlinked_dot_dir_still_lands_in_directly_kept_dirs(tmp_p
     dotdir = tmp_path / ".config"
     dotdir.symlink_to(target)
     _protected, directly_kept_dirs = build_protected_dirs(
-        tmp_path, set(), [], False, True
+        tmp_path, set(), [], True, False
     )
     assert dotdir in directly_kept_dirs
+
+
+# ---------- dot flags classify an entry by its own type ----------
+
+
+@pytest.mark.parametrize("target", ["real_dir", "real_file", "does_not_exist"])
+def test_is_directly_kept_dot_symlink_answers_to_dot_files(tmp_path, target):
+    """A dot-named symlink is a dotfile, whatever it points at."""
+    (tmp_path / "real_dir").mkdir()
+    (tmp_path / "real_file").write_text("real\n")
+    link = tmp_path / ".link"
+    link.symlink_to(tmp_path / target)
+    assert is_directly_kept(link, tmp_path, set(), [], True, False)
+    assert not is_directly_kept(link, tmp_path, set(), [], False, True)
+
+
+def test_real_dot_dir_and_dot_file_keep_their_own_flags(tmp_path):
+    dot_dir = tmp_path / ".config"
+    dot_dir.mkdir()
+    dot_file = tmp_path / ".env"
+    dot_file.write_text("x\n")
+    assert is_directly_kept(dot_dir, tmp_path, set(), [], False, True)
+    assert not is_directly_kept(dot_dir, tmp_path, set(), [], True, False)
+    assert is_directly_kept(dot_file, tmp_path, set(), [], True, False)
+    assert not is_directly_kept(dot_file, tmp_path, set(), [], False, True)
+
+
+def test_is_directly_kept_dot_fifo_answers_to_dot_files(tmp_path):
+    """Anything that is not a real directory counts as a dotfile."""
+    fifo = tmp_path / ".pipe"
+    os.mkfifo(fifo)
+    assert is_directly_kept(fifo, tmp_path, set(), [], True, False)
+    assert not is_directly_kept(fifo, tmp_path, set(), [], False, True)
 
 
 # ---------- narrowing-pattern hints ----------

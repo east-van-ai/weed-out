@@ -6,8 +6,10 @@ the exit codes, is in CLI.
 
 ## Scope and dependencies
 
-`weed-out` needs Python 3.9 or newer, and CI tests 3.9 through 3.14. It is
-built on the standard library plus one runtime dependency, `send2trash`
+`weed-out` needs Python 3.9 or newer, and CI tests 3.9 through 3.15. The
+floor is macOS's system Python, so the tool runs on a stock Mac's own
+interpreter. That is why 3.9 stays past its end of life. The tool is built
+on the standard library plus one runtime dependency, `send2trash`
 (BSD-3-Clause), used only by `trash`.
 
 That dependency cannot be an optional extra. The tool is installed with
@@ -168,6 +170,12 @@ facts make the rule concrete.
 - **`tree` shows every link's target**, as `name -> target`, dangling
   ones included. An entry that looks like a folder but isn't expanded has
   to say why, or "not walked into" reads as "empty".
+
+The dot flags draw the same line. A dot-named symlink is a dotfile, so
+`--dot-files` keeps it and `--dot-dirs` does not, whatever it points at.
+Asking the target would tie a link's survival to something outside it, and
+a dangling link would answer to neither flag. Letting either flag keep any
+link spares a few links, but then neither flag means what it says.
 
 ### Collapsing doomed directories
 

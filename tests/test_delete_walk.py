@@ -533,6 +533,36 @@ def test_delete_commit_removes_a_doomed_symlink_as_the_link_node(tmp_path):
     assert (outside / "secret.txt").read_text() == "outside content\n"
 
 
+def test_dot_dirs_removes_a_dot_symlink_and_leaves_its_target(tmp_path):
+    """--dot-dirs keeps real directories only, so a dot-named link to a
+    directory is doomed. Removing it must not reach what it points at."""
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside content\n")
+    link = root / ".config"
+    link.symlink_to(outside)
+
+    exact_keep, kept_roots = build_exact_keep(root, [])
+    delete_rest(root, exact_keep, [], False, True, mode="delete", kept_roots=kept_roots)
+    assert not link.is_symlink()
+    assert (outside / "secret.txt").read_text() == "outside content\n"
+
+
+def test_dot_files_keeps_a_dangling_dot_symlink(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    link = root / ".broken"
+    link.symlink_to(root / "does_not_exist")
+    (root / "junk.txt").write_text("junk\n")
+
+    exact_keep, kept_roots = build_exact_keep(root, [])
+    delete_rest(root, exact_keep, [], True, False, mode="delete", kept_roots=kept_roots)
+    assert link.is_symlink()
+    assert not (root / "junk.txt").exists()
+
+
 def test_dry_run_count_line_does_not_count_a_symlink_as_a_directory(tmp_path, capsys):
     root = tmp_path / "root"
     root.mkdir()
